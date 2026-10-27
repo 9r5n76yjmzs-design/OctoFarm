@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "id": "REG-HARNESS-001",
+  "purpose": "regression",
+  "description": "Proves a new regression fixture can be added through the documented loader path without changing harness-core logic.",
+  "requirements": [
+    "OR11-REQ-005",
+    "OR11-REQ-040",
+    "OR11-REQ-043"
+  ],
+  "source": {
+    "kind": "engineering",
+    "reference": "OR-11 / OR11-I01"
+  },
+  "tags": [
+    "harness",
+    "regression",
+    "fixture-foundation"
+  ],
+  "input": {
+    "scenario": "fixture-loader-smoke",
+    "payload": {
+      "value": 1
+    }
+  },
+  "expected": {
+    "loaded": true,
+    "fixtureId": "REG-HARNESS-001"
+  }
+}
