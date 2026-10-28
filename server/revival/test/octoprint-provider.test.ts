@@ -102,7 +102,7 @@ test('capabilitiesRevision is monotonic and reflected in snapshots', async () =>
   const synthetic = new SyntheticOctoPrint(scenario);
   await synthetic.start();
   try {
-    const provider = new OctoPrintProvider(synthetic.endpoint(), 'provider-1', 'printer-1', new TestFetchTransport(), () => 1000);
+    const provider = new OctoPrintProvider(synthetic.endpoint(), 'provider-1', 'printer-1', new TestFetchTransport(), new StaticCredentialAccessor(), () => 1000);
     provider.setCapabilitiesRevision(2);
     const value = await provider.snapshot();
     assert.equal(value.capabilitiesRevision, 2);
