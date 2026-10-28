@@ -216,17 +216,27 @@ async function runHostSecurityGate() {
       expectThrow(() => normalizeLogicalPath('%2e'));
     },
 
-    'resource-ceilings': () => {
+    'resource-ceilings': async () => {
       const policy = new ResourcePolicy({
         maxConcurrent: 1,
         maxPayloadBytes: 10,
         maxRetries: 1,
-        maxTimeoutMs: 100
+        maxTimeoutMs: 20
       });
       policy.assertPayload(10);
       expectThrow(() => policy.assertPayload(11));
       assert.equal(policy.canRetry(0), true);
       assert.equal(policy.canRetry(1), false);
+
+      await assert.rejects(
+        policy.run(() => new Promise(() => {})),
+        /Operation timeout/
+      );
+      assert.equal(policy.status().active, 1);
+      await assert.rejects(
+        policy.run(async () => 'should-not-run'),
+        /Concurrency limit/
+      );
     },
 
     'browser-credential-boundary': () => {

@@ -19,6 +19,7 @@ export class ResourcePolicy {
     nonNegativeInteger(limits.maxRetries, 'maxRetries');
     nonNegativeInteger(limits.maxTimeoutMs, 'maxTimeoutMs');
     if (limits.maxConcurrent < 1) throw new Error('maxConcurrent must be at least 1');
+    if (limits.maxTimeoutMs < 1) throw new Error('maxTimeoutMs must be at least 1');
     this.limits = { ...limits };
   }
 
@@ -38,13 +39,40 @@ export class ResourcePolicy {
     return Number.isInteger(attempt) && attempt >= 0 && attempt < this.limits.maxRetries;
   }
 
-  async run<T>(operation: () => Promise<T> | T): Promise<T> {
+  async run<T>(
+    operation: (signal: AbortSignal) => Promise<T> | T,
+    timeoutMs: number = this.limits.maxTimeoutMs
+  ): Promise<T> {
+    this.assertTimeout(timeoutMs);
+    if (timeoutMs < 1) throw new Error('Operation timeout must be at least 1 ms');
     if (this.active >= this.limits.maxConcurrent) throw new Error('Concurrency limit reached');
+
     this.active++;
+    const controller = new AbortController();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let timedOut = false;
+
+    const work = Promise.resolve().then(() => operation(controller.signal));
+    const timeout = new Promise<never>((_resolve, reject) => {
+      timer = setTimeout(() => {
+        timedOut = true;
+        reject(new Error('Operation timeout'));
+        queueMicrotask(() => controller.abort());
+      }, timeoutMs);
+    });
+
     try {
-      return await operation();
+      return await Promise.race([work, timeout]);
     } finally {
-      this.active--;
+      if (timer !== undefined) clearTimeout(timer);
+
+      if (timedOut) {
+        void work.finally(() => {
+          this.active--;
+        }).catch(() => {});
+      } else {
+        this.active--;
+      }
     }
   }
 
