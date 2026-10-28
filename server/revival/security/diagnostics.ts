@@ -1,3 +1,6 @@
+import { requireSensitiveValueGuard } from './sensitive-values.ts';
+import type { SensitiveValueGuard } from './sensitive-values.ts';
+
 export interface DiagnosticContext {
   providerInstanceId?: string;
   printerId?: string;
@@ -21,31 +24,24 @@ const CATEGORIES = new Set([
 
 const TOKEN = /^[A-Za-z0-9_.:-]{1,96}$/;
 
-function redact(value: string, sensitiveValues: readonly string[]): string {
-  let output = value;
-  for (const sensitive of sensitiveValues) {
-    if (sensitive) output = output.split(sensitive).join('[REDACTED]');
-  }
-  return output;
-}
-
 function optionalToken(
   value: unknown,
   name: string,
-  sensitiveValues: readonly string[]
+  guard: SensitiveValueGuard
 ): string | undefined {
   if (value === undefined) return undefined;
   if (typeof value !== 'string' || !TOKEN.test(value)) {
     throw new Error(`Invalid diagnostic ${name}`);
   }
-  return redact(value, sensitiveValues);
+  return guard.redact(value);
 }
 
 export function serializeProviderDiagnostic(
   input: Record<string, unknown>,
   context: DiagnosticContext = {},
-  sensitiveValues: readonly string[] = []
+  sensitiveGuard: SensitiveValueGuard
 ): Record<string, unknown> {
+  const guard = requireSensitiveValueGuard(sensitiveGuard);
   const output: Record<string, unknown> = {};
 
   if (input.category !== undefined) {
@@ -55,7 +51,7 @@ export function serializeProviderDiagnostic(
     output.category = input.category;
   }
 
-  const operation = optionalToken(input.operation, 'operation', sensitiveValues);
+  const operation = optionalToken(input.operation, 'operation', guard);
   if (operation !== undefined) output.operation = operation;
 
   if (input.retryable !== undefined) {
@@ -69,19 +65,19 @@ export function serializeProviderDiagnostic(
     if (typeof input.userSafeMessage !== 'string' || input.userSafeMessage.length > 512) {
       throw new Error('Invalid diagnostic userSafeMessage');
     }
-    output.userSafeMessage = redact(input.userSafeMessage, sensitiveValues);
+    output.userSafeMessage = guard.redact(input.userSafeMessage);
   }
 
-  const diagnosticCode = optionalToken(input.diagnosticCode, 'diagnosticCode', sensitiveValues);
+  const diagnosticCode = optionalToken(input.diagnosticCode, 'diagnosticCode', guard);
   if (diagnosticCode !== undefined) output.diagnosticCode = diagnosticCode;
 
   if (context.providerInstanceId) {
     if (!TOKEN.test(context.providerInstanceId)) throw new Error('Invalid providerInstanceId');
-    output.providerInstanceId = context.providerInstanceId;
+    output.providerInstanceId = guard.redact(context.providerInstanceId);
   }
   if (context.printerId) {
     if (!TOKEN.test(context.printerId)) throw new Error('Invalid printerId');
-    output.printerId = context.printerId;
+    output.printerId = guard.redact(context.printerId);
   }
   if (context.httpStatus !== undefined) {
     if (!Number.isInteger(context.httpStatus) || context.httpStatus < 100 || context.httpStatus > 599) {

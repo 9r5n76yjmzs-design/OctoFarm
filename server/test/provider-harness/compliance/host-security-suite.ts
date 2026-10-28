@@ -7,6 +7,7 @@ const { serializeProviderDiagnostic } = require('../../../revival/security/diagn
 const { validateProviderLogicalPath } = require('../../../revival/security/path-policy.ts');
 const { ResourcePolicy } = require('../../../revival/security/resource-policy.ts');
 const { projectProviderForBrowser } = require('../../../revival/security/browser-projection.ts');
+const { SensitiveValueGuard } = require('../../../revival/security/sensitive-values.ts');
 const { normalizeLogicalPath } = require('../../../revival/core/provider-contract.ts');
 
 function expectThrow(callback: () => unknown): void {
@@ -25,13 +26,14 @@ async function runHostSecurityGate() {
       const marker = 'I07-SENSITIVE-MARKER';
       const detector = new SecretLeakDetector();
       detector.seed(marker);
+      const guard = new SensitiveValueGuard([marker]);
       const safe = serializeProviderDiagnostic({
         category: 'DATA_INVALID',
         operation: 'parse',
         retryable: false,
         userSafeMessage: `invalid ${marker}`,
         raw: { privateValue: marker }
-      }, {}, [marker]);
+      }, {}, guard);
       detector.assertClean(safe);
     },
 
@@ -61,6 +63,36 @@ async function runHostSecurityGate() {
 
       assert.equal((await network.request('http://printer.local/api')).ok, true);
       await assert.rejects(network.request('http://blocked.local/api'));
+
+      let forbiddenHeaderExecutions = 0;
+      const headerExecutor = {
+        async execute() {
+          forbiddenHeaderExecutions++;
+          return {
+            status: 200,
+            ok: true,
+            bodyBytes: 2,
+            connectedAddress: '192.0.2.10',
+            async json() { return {}; }
+          };
+        }
+      };
+      const headerGuard = new HostNetworkClient({
+        allowedOrigins: ['http://printer.local'],
+        allowedAddressesByHost: { 'printer.local': ['192.0.2.10'] },
+        maxRedirects: 0,
+        maxResponseBytes: 100,
+        maxTimeoutMs: 100
+      }, headerExecutor, resolver);
+      await assert.rejects(
+        headerGuard.request('http://printer.local/api', { headers: { Host: 'other-vhost.local' } }),
+        /request header/
+      );
+      await assert.rejects(
+        headerGuard.request('http://printer.local/api', { headers: { 'Proxy-Authorization': 'synthetic-proxy-secret' } }),
+        /request header/
+      );
+      assert.equal(forbiddenHeaderExecutions, 0);
 
       const crossOriginResolver = {
         async resolve(hostname: string) {
@@ -169,7 +201,7 @@ async function runHostSecurityGate() {
         headers: { unexpected: 'private' },
         stack: 'private'
       };
-      const safe = serializeProviderDiagnostic(raw);
+      const safe = serializeProviderDiagnostic(raw, {}, new SensitiveValueGuard([]));
       assert.equal(Object.prototype.hasOwnProperty.call(safe, 'headers'), false);
       assert.equal(Object.prototype.hasOwnProperty.call(safe, 'stack'), false);
     },
@@ -180,6 +212,8 @@ async function runHostSecurityGate() {
       expectThrow(() => validateProviderLogicalPath('nul' + String.fromCharCode(0) + 'file'));
       expectThrow(() => normalizeLogicalPath('%2e%2e/escape.gcode'));
       expectThrow(() => normalizeLogicalPath('%252e%252e%252fescape.gcode'));
+      expectThrow(() => normalizeLogicalPath('.'));
+      expectThrow(() => normalizeLogicalPath('%2e'));
     },
 
     'resource-ceilings': () => {
@@ -197,23 +231,26 @@ async function runHostSecurityGate() {
 
     'browser-credential-boundary': () => {
       const marker = 'PRIVATE-I07-MARKER';
+      const guard = new SensitiveValueGuard([marker]);
       const snapshot = {
         identity: {
           providerId: 'sample',
           providerInstanceId: 'sample-1',
-          displayName: 'Sample',
+          displayName: `Sample ${marker}`,
           providerVersion: '1',
           implementationVersion: '1'
         },
         capabilitiesRevision: 1,
         capabilities: [{ id: 'PRINT', supported: true, constraints: { privateValue: marker } }],
         availability: [{ capabilityId: 'PRINT', available: true, reason: marker, observedAt: 1, capabilitiesRevision: 1 }],
-        state: { printerId: 'p1', connection: 'CONNECTED', operation: 'IDLE', capabilitiesRevision: 1, observedAt: 1 },
+        state: { printerId: 'p1', connection: 'CONNECTED', operation: 'IDLE', capabilitiesRevision: 1, observedAt: 1, privateValue: marker },
         health: { reachable: true, authenticated: true, transportConnected: true, retrying: false, degraded: false, reason: marker, observedAt: 1 },
         storages: [],
         files: [{ storageId: 'local', path: 'cube.gcode', name: 'cube.gcode', metadata: { privateValue: marker } }]
       };
-      assert.equal(JSON.stringify(projectProviderForBrowser(snapshot)).includes(marker), false);
+      const projected = projectProviderForBrowser(snapshot, guard);
+      assert.equal(JSON.stringify(projected).includes(marker), false);
+      assert.equal(Object.prototype.hasOwnProperty.call(projected.state, 'privateValue'), false);
     }
   };
 

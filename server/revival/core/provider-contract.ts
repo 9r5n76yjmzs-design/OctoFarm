@@ -153,7 +153,9 @@ export function normalizeLogicalPath(value: string): string {
 
   const parts = portable.split('/').filter((part) => part !== '' && part !== '.');
   invariant(!parts.includes('..'), 'file path must not contain traversal');
-  return parts.join('/');
+  const normalized = parts.join('/');
+  invariant(normalized.length > 0, 'file path must remain non-empty after normalization');
+  return normalized;
 }
 
 export function assertProviderSnapshot(value: ProviderSnapshot): ProviderSnapshot {
