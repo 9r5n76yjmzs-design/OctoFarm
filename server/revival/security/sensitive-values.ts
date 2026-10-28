@@ -5,7 +5,7 @@ export class SensitiveValueGuard {
     if (!Array.isArray(values)) throw new Error('Sensitive values are required');
     this.values = [...new Set(
       values.filter((value) => typeof value === 'string' && value.length > 0)
-    )];
+    )].sort((left, right) => right.length - left.length);
   }
 
   redact(value: string): string {

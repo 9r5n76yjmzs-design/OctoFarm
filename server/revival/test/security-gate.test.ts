@@ -543,3 +543,14 @@ test('network mediation rejects authority, proxy, hop-by-hop, rewrite, and CRLF-
   });
   assert.deepEqual(seen, [{ 'X-OctoPrint-Api-Version': '2.0.0' }]);
 });
+
+
+test('sensitive-value guard redacts overlapping credentials longest-first', () => {
+  const shorter = 'token';
+  const longer = 'token-SECRET-XYZ';
+  const guard = new SensitiveValueGuard([shorter, longer]);
+  const redacted = guard.redact(`credential=${longer}`);
+
+  assert.equal(redacted.includes('SECRET-XYZ'), false);
+  assert.equal(redacted, 'credential=[REDACTED]');
+});
