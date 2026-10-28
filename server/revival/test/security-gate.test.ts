@@ -8,7 +8,9 @@ const { serializeProviderDiagnostic } = require('../security/diagnostics.ts');
 const { validateProviderLogicalPath } = require('../security/path-policy.ts');
 const { ResourcePolicy } = require('../security/resource-policy.ts');
 const { projectProviderForBrowser } = require('../security/browser-projection.ts');
+const { SensitiveValueGuard } = require('../security/sensitive-values.ts');
 const { MANDATORY_SECURITY_CHECKS, runMandatorySecurityGate } = require('../security/security-gate.ts');
+const { normalizeFiles } = require('../providers/octoprint/normalization.ts');
 const { SecretLeakDetector } = require('../../test/provider-harness/host/secret-leak-detector.ts');
 const { RecordingTelemetry } = require('../../test/provider-harness/host/recording-telemetry.ts');
 const { NoopTelemetry } = require('../../test/provider-harness/host/noop-telemetry.ts');
@@ -20,6 +22,7 @@ function response(body = {}, options = {}) {
     ok: (options.status ?? 200) >= 200 && (options.status ?? 200) < 300,
     redirectUrl: options.redirectUrl,
     bodyBytes: options.bodyBytes ?? Buffer.byteLength(text),
+    connectedAddress: options.connectedAddress ?? '192.0.2.10',
     async json() { return body; }
   };
 }
@@ -27,7 +30,9 @@ function response(body = {}, options = {}) {
 test('network mediation enforces destination, protocol, DNS/IP pinning, redirects, URL credentials, and response size', async () => {
   const dns = new Map([['printer.local', ['192.0.2.10']], ['other.local', ['198.51.100.4']]]);
   const resolver = { async resolve(hostname) { return dns.get(hostname) ?? []; } };
-  const executor = { async execute(url) {
+  const executionPolicies = [];
+  const executor = { async execute(url, _init, policy) {
+    executionPolicies.push(policy);
     if (url.endsWith('/redirect')) return response({}, { redirectUrl: 'https://blocked.example/next' });
     if (url.endsWith('/large')) return response({}, { bodyBytes: 1001 });
     return response({ ok: true });
@@ -36,14 +41,18 @@ test('network mediation enforces destination, protocol, DNS/IP pinning, redirect
     allowedOrigins: ['http://printer.local'],
     allowedAddressesByHost: { 'printer.local': ['192.0.2.10'] },
     maxRedirects: 1,
-    maxResponseBytes: 1000
+    maxResponseBytes: 1000,
+    maxTimeoutMs: 100
   }, executor, resolver);
 
   assert.equal((await client.request('http://printer.local/api')).ok, true);
+  assert.deepEqual(executionPolicies[0].approvedAddresses, ['192.0.2.10']);
+  assert.equal(executionPolicies[0].maxResponseBytes, 1000);
+  assert.equal(executionPolicies[0].redirectMode, 'manual');
   await assert.rejects(client.request('http://other.local/api'), /destination/);
   await assert.rejects(client.request('file:///not-allowed'), /protocol/);
   await assert.rejects(client.request('http://user:pass@printer.local/api'), /credentials/);
-  await assert.rejects(client.request('http://printer.local/redirect'), /destination/);
+  await assert.rejects(client.request('http://printer.local/redirect'), /cross-origin redirect/);
   await assert.rejects(client.request('http://printer.local/large'), /payload/);
 
   dns.set('printer.local', ['127.0.0.1']);
@@ -53,15 +62,49 @@ test('network mediation enforces destination, protocol, DNS/IP pinning, redirect
 test('network mediation fails closed when response size is not measured', async () => {
   const resolver = { async resolve() { return ['192.0.2.10']; } };
   const executor = { async execute() {
-    return { status: 200, ok: true, bodyBytes: Number.NaN, async json() { return {}; } };
+    return { status: 200, ok: true, bodyBytes: Number.NaN, connectedAddress: '192.0.2.10', async json() { return {}; } };
   }};
   const client = new HostNetworkClient({
     allowedOrigins: ['http://printer.local'],
     allowedAddressesByHost: { 'printer.local': ['192.0.2.10'] },
     maxRedirects: 0,
-    maxResponseBytes: 1000
+    maxResponseBytes: 1000,
+    maxTimeoutMs: 100
   }, executor, resolver);
   await assert.rejects(client.request('http://printer.local/api'), /measured response size/);
+});
+
+test('network mediation binds approved address to execution and rejects connection drift', async () => {
+  const resolver = { async resolve() { return ['192.0.2.10']; } };
+  const executor = { async execute(_url, _init, policy) {
+    assert.deepEqual(policy.approvedAddresses, ['192.0.2.10']);
+    return response({}, { connectedAddress: '127.0.0.1' });
+  }};
+  const client = new HostNetworkClient({
+    allowedOrigins: ['http://printer.local'],
+    allowedAddressesByHost: { 'printer.local': ['192.0.2.10'] },
+    maxRedirects: 0,
+    maxResponseBytes: 1000,
+    maxTimeoutMs: 100
+  }, executor, resolver);
+  await assert.rejects(client.request('http://printer.local/api'), /connected address/);
+});
+
+test('network mediation actively aborts a hung executor at the configured timeout', async () => {
+  const resolver = { async resolve() { return ['192.0.2.10']; } };
+  const executor = { async execute(_url, _init, policy) {
+    return await new Promise((_resolve, reject) => {
+      policy.signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+    });
+  }};
+  const client = new HostNetworkClient({
+    allowedOrigins: ['http://printer.local'],
+    allowedAddressesByHost: { 'printer.local': ['192.0.2.10'] },
+    maxRedirects: 0,
+    maxResponseBytes: 1000,
+    maxTimeoutMs: 10
+  }, executor, resolver);
+  await assert.rejects(client.request('http://printer.local/api'), /timeout/);
 });
 
 test('authorization denial occurs before provider invocation even when operation is supported', async () => {
@@ -101,6 +144,7 @@ test('privileged classification is host-owned and cannot be demoted by the calle
 
 test('safe diagnostic serialization allowlists fields and redacts known sensitive values', () => {
   const marker = 'SYNTHETIC-I06-MARKER-7f31';
+  const guard = new SensitiveValueGuard([marker]);
   const raw = {
     category: 'PROVIDER_ERROR',
     operation: 'snapshot',
@@ -113,7 +157,7 @@ test('safe diagnostic serialization allowlists fields and redacts known sensitiv
     stack: `stack ${marker}`,
     cause: new Error(marker)
   };
-  const safe = serializeProviderDiagnostic(raw, { providerInstanceId: 'p1', printerId: 'printer1', httpStatus: 500 }, [marker]);
+  const safe = serializeProviderDiagnostic(raw, { providerInstanceId: 'p1', printerId: 'printer1', httpStatus: 500 }, guard);
   const detector = new SecretLeakDetector();
   detector.seed(marker);
   detector.assertClean(safe);
@@ -121,6 +165,21 @@ test('safe diagnostic serialization allowlists fields and redacts known sensitiv
     'category','diagnosticCode','httpStatus','operation','printerId','providerInstanceId','retryable','userSafeMessage'
   ].sort());
   assert.equal(safe.userSafeMessage.includes('[REDACTED]'), true);
+
+  assert.throws(
+    () => serializeProviderDiagnostic({
+      category: { nested: { privateValue: marker } },
+      operation: 'snapshot'
+    }, {}, guard),
+    /category/
+  );
+  assert.throws(
+    () => serializeProviderDiagnostic({
+      category: 'PROVIDER_ERROR',
+      operation: { nested: marker }
+    }, {}, guard),
+    /operation/
+  );
 });
 
 test('logical path policy rejects traversal, deep encoding, NUL, alternate separators, and absolute paths', () => {
@@ -173,8 +232,37 @@ test('telemetry is optional and structured without altering functional result', 
   }
 });
 
+test('telemetry failure is isolated from authorization and provider invocation semantics', async () => {
+  let allowedInvocations = 0;
+  const throwingTelemetry = { event() { throw new Error('telemetry unavailable'); } };
+
+  const allowedBroker = new HostOperationBroker(
+    { authorize() { return true; } },
+    [],
+    throwingTelemetry
+  );
+  assert.equal(
+    await allowedBroker.invoke('PRINT', {}, () => { allowedInvocations++; return 42; }),
+    42
+  );
+  assert.equal(allowedInvocations, 1);
+
+  let deniedInvocations = 0;
+  const deniedBroker = new HostOperationBroker(
+    { authorize() { return false; } },
+    [],
+    throwingTelemetry
+  );
+  await assert.rejects(
+    deniedBroker.invoke('PRINT', {}, () => { deniedInvocations++; }),
+    (error) => error instanceof SecurityDeniedError && error.code === 'AUTHORIZATION_DENIED'
+  );
+  assert.equal(deniedInvocations, 0);
+});
+
 test('browser projection drops arbitrary provider metadata, constraints, and diagnostic reason strings', () => {
   const marker = 'PRIVATE-BROWSER-MARKER';
+  const guard = new SensitiveValueGuard([marker]);
   const snapshot = {
     identity: { providerId:'octoprint', providerInstanceId:'p1', displayName:'OctoPrint', providerVersion:'2.0.0', implementationVersion:'revival' },
     capabilitiesRevision:1,
@@ -188,7 +276,7 @@ test('browser projection drops arbitrary provider metadata, constraints, and dia
     endpoint:'http://printer.local',
     privateValue:marker
   };
-  const projected = projectProviderForBrowser(snapshot);
+  const projected = projectProviderForBrowser(snapshot, guard);
   const serialized = JSON.stringify(projected);
   assert.equal(serialized.includes('printer.local'), false);
   assert.equal(serialized.includes(marker), false);
@@ -206,7 +294,7 @@ test('mandatory Security Gate runs every host-selected check despite provider by
   });
 
   assert.equal(report.bypassRequested, true);
-  assert.equal(report.passed, true);
+  assert.equal(report.passed, false);
   assert.deepEqual(ran, [...MANDATORY_SECURITY_CHECKS]);
 });
 
@@ -242,6 +330,7 @@ test('OctoPrint provider source has no direct fetch or node HTTP networking fall
 
 test('security artifacts remain clean when synthetic sensitive marker is present only in raw input', () => {
   const marker = 'SYNTHETIC-I06-MARKER-a29c';
+  const guard = new SensitiveValueGuard([marker]);
   const detector = new SecretLeakDetector();
   detector.seed(marker);
 
@@ -254,9 +343,374 @@ test('security artifacts remain clean when synthetic sensitive marker is present
       retryable: false,
       userSafeMessage: `bad input ${marker}`,
       raw: { privateValue: marker }
-    }, {}, [marker]),
+    }, {}, guard),
     telemetry: { name: 'security.authorization', attributes: { operation: 'PRINT', allowed: false } },
     report: { gate: 'MANDATORY_SECURITY', passed: true }
   };
   detector.assertClean(artifacts);
+});
+
+
+test('network mediation denies cross-origin redirect even when both origins are otherwise allowed', async () => {
+  const seen = [];
+  const resolver = {
+    async resolve(hostname) {
+      if (hostname === 'a.local') return ['192.0.2.10'];
+      if (hostname === 'b.local') return ['192.0.2.20'];
+      return [];
+    }
+  };
+  const executor = {
+    async execute(url, init) {
+      seen.push({ url, headers: { ...(init?.headers ?? {}) } });
+      if (url === 'http://a.local/start') {
+        return response({}, {
+          status: 302,
+          redirectUrl: 'http://b.local/next',
+          connectedAddress: '192.0.2.10'
+        });
+      }
+      return response({}, { connectedAddress: '192.0.2.20' });
+    }
+  };
+  const client = new HostNetworkClient({
+    allowedOrigins: ['http://a.local', 'http://b.local'],
+    allowedAddressesByHost: {
+      'a.local': ['192.0.2.10'],
+      'b.local': ['192.0.2.20']
+    },
+    maxRedirects: 1,
+    maxResponseBytes: 1000,
+    maxTimeoutMs: 100
+  }, executor, resolver);
+
+  await assert.rejects(
+    client.request('http://a.local/start', { headers: { Authorization: 'synthetic-provider-credential' } }),
+    /cross-origin redirect/
+  );
+  assert.equal(seen.length, 1);
+});
+
+test('network timeout remains bounded when executor ignores AbortSignal', async () => {
+  const resolver = { async resolve() { return ['192.0.2.10']; } };
+  const executor = { async execute() { return new Promise(() => {}); } };
+  const client = new HostNetworkClient({
+    allowedOrigins: ['http://printer.local'],
+    allowedAddressesByHost: { 'printer.local': ['192.0.2.10'] },
+    maxRedirects: 0,
+    maxResponseBytes: 1000,
+    maxTimeoutMs: 10
+  }, executor, resolver);
+
+  const started = Date.now();
+  await assert.rejects(client.request('http://printer.local/hang'), /timeout/);
+  assert.ok(Date.now() - started < 250);
+});
+
+test('unknown operations fail closed before authorization or provider invocation', async () => {
+  let authorizationCalls = 0;
+  let providerCalls = 0;
+  const broker = new HostOperationBroker({
+    authorize() {
+      authorizationCalls++;
+      return true;
+    }
+  });
+
+  await assert.rejects(
+    broker.invoke('FIRMWARE_FLASH', {}, () => {
+      providerCalls++;
+      return 'bad';
+    }),
+    (error) => error instanceof SecurityDeniedError && error.code === 'UNKNOWN_OPERATION'
+  );
+  assert.equal(authorizationCalls, 0);
+  assert.equal(providerCalls, 0);
+  assert.equal(broker.isKnown('FIRMWARE_FLASH'), false);
+  assert.equal(broker.isPrivileged('PROVIDER_SETTINGS'), true);
+});
+
+test('encoded traversal is rejected before normalized FileRef crosses provider boundary', () => {
+  for (const bad of [
+    '%2e%2e/escape.gcode',
+    '%252e%252e%252fescape.gcode',
+    '..\\escape.gcode',
+    'nul%00byte.gcode'
+  ]) {
+    assert.throws(
+      () => normalizeFiles({ files: [{ type: 'machinecode', name: 'bad.gcode', path: bad }] }),
+      /file path/
+    );
+  }
+});
+
+
+test('diagnostic serialization requires host sensitive-value context and fails closed when omitted', () => {
+  assert.throws(
+    () => serializeProviderDiagnostic({
+      category: 'PROVIDER_ERROR',
+      userSafeMessage: 'provider message'
+    }),
+    /SensitiveValueGuard is required/
+  );
+});
+
+test('browser projection redacts sensitive values in allowed fields and drops unexpected state fields', () => {
+  const marker = 'SYNTHETIC-R3-BROWSER-SECRET';
+  const guard = new SensitiveValueGuard([marker]);
+  const snapshot = {
+    identity: {
+      providerId: 'octoprint',
+      providerInstanceId: 'p1',
+      displayName: `OctoPrint ${marker}`,
+      providerVersion: '2.0.0',
+      implementationVersion: 'revival'
+    },
+    capabilitiesRevision: 1,
+    capabilities: [],
+    availability: [],
+    state: {
+      printerId: 'printer1',
+      connection: 'CONNECTED',
+      operation: 'IDLE',
+      capabilitiesRevision: 1,
+      observedAt: 1,
+      privateValue: marker
+    },
+    health: {
+      reachable: true,
+      authenticated: true,
+      transportConnected: true,
+      retrying: false,
+      degraded: false,
+      observedAt: 1
+    },
+    storages: [],
+    files: []
+  };
+
+  const projected = projectProviderForBrowser(snapshot, guard);
+  const serialized = JSON.stringify(projected);
+  assert.equal(serialized.includes(marker), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(projected.state, 'privateValue'), false);
+  assert.equal(projected.identity.displayName.includes('[REDACTED]'), true);
+});
+
+test('canonical logical path normalization rejects empty-after-normalization paths', () => {
+  for (const bad of ['.', './', '%2e', '%2e/']) {
+    assert.throws(
+      () => normalizeFiles({ files: [{ type: 'machinecode', name: 'bad.gcode', path: bad }] }),
+      /file path/
+    );
+  }
+});
+
+
+test('network mediation rejects authority, proxy, hop-by-hop, rewrite, and CRLF-bearing headers before execution', async () => {
+  const resolver = { async resolve() { return ['192.0.2.10']; } };
+  const seen = [];
+  const executor = {
+    async execute(_url, init) {
+      seen.push({ ...(init?.headers ?? {}) });
+      return response({}, { connectedAddress: '192.0.2.10' });
+    }
+  };
+  const client = new HostNetworkClient({
+    allowedOrigins: ['http://printer.local'],
+    allowedAddressesByHost: { 'printer.local': ['192.0.2.10'] },
+    maxRedirects: 0,
+    maxResponseBytes: 1000,
+    maxTimeoutMs: 100
+  }, executor, resolver);
+
+  for (const headers of [
+    { Host: 'other-vhost.local' },
+    { 'Proxy-Authorization': 'synthetic-proxy-secret' },
+    { Connection: 'keep-alive' },
+    { 'X-Forwarded-Host': 'other-vhost.local' },
+    { 'X-Original-URL': '/admin' },
+    { 'X-OctoPrint-Api-Version': '2.0.0\r\nHost: other-vhost.local' }
+  ]) {
+    await assert.rejects(
+      client.request('http://printer.local/api', { headers }),
+      /request header/
+    );
+  }
+
+  assert.equal(seen.length, 0);
+  await client.request('http://printer.local/api', {
+    headers: { 'X-OctoPrint-Api-Version': '2.0.0' }
+  });
+  assert.deepEqual(seen, [{ 'X-OctoPrint-Api-Version': '2.0.0' }]);
+});
+
+
+test('sensitive-value guard redacts overlapping credentials longest-first', () => {
+  const shorter = 'token';
+  const longer = 'token-SECRET-XYZ';
+  const guard = new SensitiveValueGuard([shorter, longer]);
+  const redacted = guard.redact(`credential=${longer}`);
+
+  assert.equal(redacted.includes('SECRET-XYZ'), false);
+  assert.equal(redacted, 'credential=[REDACTED]');
+});
+
+
+test('normalized provider snapshot rejects undeclared fields at the runtime boundary', () => {
+  const { assertProviderSnapshot } = require('../core/provider-contract.ts');
+  const base = {
+    identity: {
+      providerId: 'octoprint',
+      providerInstanceId: 'p1',
+      displayName: 'OctoPrint',
+      providerVersion: '2.0.0',
+      implementationVersion: 'revival'
+    },
+    capabilitiesRevision: 1,
+    capabilities: [],
+    availability: [],
+    state: {
+      printerId: 'printer1',
+      connection: 'CONNECTED',
+      operation: 'IDLE',
+      capabilitiesRevision: 1,
+      observedAt: 1
+    },
+    health: {
+      reachable: true,
+      authenticated: true,
+      transportConnected: true,
+      retrying: false,
+      degraded: false,
+      observedAt: 1
+    },
+    storages: [],
+    files: []
+  };
+
+  assert.doesNotThrow(() => assertProviderSnapshot(base));
+  assert.throws(
+    () => assertProviderSnapshot({ ...base, nativeTopLevel: 'raw' }),
+    /snapshot contains unexpected field/
+  );
+  assert.throws(
+    () => assertProviderSnapshot({ ...base, state: { ...base.state, nativeState: 'raw' } }),
+    /state contains unexpected field/
+  );
+  assert.throws(
+    () => assertProviderSnapshot({ ...base, identity: { ...base.identity, nativeIdentity: 'raw' } }),
+    /identity contains unexpected field/
+  );
+  assert.throws(
+    () => assertProviderSnapshot({ ...base, health: { ...base.health, nativeHealth: 'raw' } }),
+    /health contains unexpected field/
+  );
+});
+
+
+test('sensitive-value guard redacts URI and form-encoded credential representations', () => {
+  const sensitive = 'SYNTHETIC R5 VALUE/42';
+  const guard = new SensitiveValueGuard([sensitive]);
+  const encoded = encodeURIComponent(sensitive);
+  const lowerEncoded = encoded.replace(/%[0-9A-F]{2}/g, (match) => match.toLowerCase());
+  const formEncoded = encoded.replace(/%20/g, '+');
+
+  for (const representation of [sensitive, encoded, lowerEncoded, formEncoded]) {
+    const redacted = guard.redact(`provider=${representation}`);
+    assert.equal(redacted.includes('SYNTHETIC'), false);
+    assert.equal(redacted.includes('VALUE'), false);
+    assert.equal(redacted, 'provider=[REDACTED]');
+  }
+});
+
+
+test('normalized provider snapshot rejects invalid values inside allowed fields', () => {
+  const { assertProviderSnapshot } = require('../core/provider-contract.ts');
+  const base = {
+    identity: {
+      providerId: 'octoprint',
+      providerInstanceId: 'p1',
+      displayName: 'OctoPrint',
+      providerVersion: '2.0.0',
+      implementationVersion: 'revival'
+    },
+    capabilitiesRevision: 1,
+    capabilities: [],
+    availability: [],
+    state: {
+      printerId: 'printer1',
+      connection: 'CONNECTED',
+      operation: 'IDLE',
+      capabilitiesRevision: 1,
+      observedAt: 1
+    },
+    health: {
+      reachable: true,
+      authenticated: true,
+      transportConnected: true,
+      retrying: false,
+      degraded: false,
+      observedAt: 1
+    },
+    storages: [],
+    files: []
+  };
+
+  assert.throws(
+    () => assertProviderSnapshot({ ...base, state: { ...base.state, connection: 'NATIVE_SERIAL_OPEN' } }),
+    /state.connection must be normalized/
+  );
+  assert.throws(
+    () => assertProviderSnapshot({ ...base, state: { ...base.state, operation: 'OCTOPRINT_OPERATIONAL' } }),
+    /state.operation must be normalized/
+  );
+  assert.throws(
+    () => assertProviderSnapshot({ ...base, state: { ...base.state, observedAt: Number.NaN } }),
+    /state.observedAt must be finite/
+  );
+  assert.throws(
+    () => assertProviderSnapshot({ ...base, health: { ...base.health, authenticated: 'yes' } }),
+    /health.authenticated is required/
+  );
+  assert.throws(
+    () => assertProviderSnapshot({ ...base, health: { ...base.health, observedAt: Number.POSITIVE_INFINITY } }),
+    /health.observedAt must be finite/
+  );
+});
+
+
+test('async authorization denial is awaited before provider invocation', async () => {
+  let providerCalls = 0;
+  const broker = new HostOperationBroker({
+    async authorize() {
+      return false;
+    }
+  });
+
+  await assert.rejects(
+    broker.invoke('PRINT', {}, () => {
+      providerCalls++;
+      return 'bad';
+    }),
+    (error) => error instanceof SecurityDeniedError && error.code === 'AUTHORIZATION_DENIED'
+  );
+  assert.equal(providerCalls, 0);
+});
+
+test('non-boolean authorization decisions fail closed', async () => {
+  let providerCalls = 0;
+  const broker = new HostOperationBroker({
+    authorize() {
+      return 'yes';
+    }
+  });
+
+  await assert.rejects(
+    broker.invoke('PRINT', {}, () => {
+      providerCalls++;
+      return 'bad';
+    }),
+    (error) => error instanceof SecurityDeniedError && error.code === 'AUTHORIZATION_INVALID'
+  );
+  assert.equal(providerCalls, 0);
 });

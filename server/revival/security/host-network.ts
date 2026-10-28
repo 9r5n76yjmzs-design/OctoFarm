@@ -1,13 +1,25 @@
+export interface HostNetworkExecutionPolicy {
+  approvedAddresses: readonly string[];
+  maxResponseBytes: number;
+  redirectMode: 'manual';
+  signal: AbortSignal;
+}
+
 export interface HostNetworkResponse {
   status: number;
   ok: boolean;
   redirectUrl?: string;
   bodyBytes: number;
+  connectedAddress: string;
   json(): Promise<unknown>;
 }
 
 export interface HostNetworkExecutor {
-  execute(url: string, init?: { method?: string; headers?: Record<string, string> }): Promise<HostNetworkResponse>;
+  execute(
+    url: string,
+    init: { method?: string; headers?: Record<string, string> } | undefined,
+    policy: HostNetworkExecutionPolicy
+  ): Promise<HostNetworkResponse>;
 }
 
 export interface HostNameResolver {
@@ -19,7 +31,44 @@ export interface HostNetworkPolicy {
   allowedAddressesByHost: Record<string, string[]>;
   maxRedirects: number;
   maxResponseBytes: number;
+  maxTimeoutMs: number;
   allowedProtocols?: string[];
+}
+
+const FORBIDDEN_REQUEST_HEADERS = new Set([
+  'host',
+  ':authority',
+  'connection',
+  'proxy-authorization',
+  'proxy-authenticate',
+  'transfer-encoding',
+  'upgrade',
+  'content-length',
+  'te',
+  'trailer',
+  'keep-alive',
+  'forwarded',
+  'x-forwarded-host',
+  'x-forwarded-proto',
+  'x-forwarded-port',
+  'x-original-url',
+  'x-rewrite-url'
+]);
+
+function sanitizeRequestHeaders(headers: Record<string, string> | undefined): Record<string, string> | undefined {
+  if (!headers) return undefined;
+  const output: Record<string, string> = {};
+  for (const [name, value] of Object.entries(headers)) {
+    const normalized = name.trim().toLowerCase();
+    if (!normalized || /[\r\n]/.test(name) || /[\r\n]/.test(value)) {
+      throw new Error('Network policy denied invalid request header');
+    }
+    if (FORBIDDEN_REQUEST_HEADERS.has(normalized)) {
+      throw new Error(`Network policy denied request header: ${normalized}`);
+    }
+    output[name] = value;
+  }
+  return output;
 }
 
 export class HostNetworkClient {
@@ -30,9 +79,20 @@ export class HostNetworkClient {
   private readonly allowedProtocols: Set<string>;
   private readonly maxRedirects: number;
   private readonly maxResponseBytes: number;
+  private readonly maxTimeoutMs: number;
   private readonly records: { url: string; allowed: boolean; reason?: string }[] = [];
 
   constructor(policy: HostNetworkPolicy, executor: HostNetworkExecutor, resolver: HostNameResolver) {
+    if (!Number.isInteger(policy.maxRedirects) || policy.maxRedirects < 0) {
+      throw new Error('maxRedirects must be a non-negative integer');
+    }
+    if (!Number.isInteger(policy.maxResponseBytes) || policy.maxResponseBytes < 1) {
+      throw new Error('maxResponseBytes must be a positive integer');
+    }
+    if (!Number.isInteger(policy.maxTimeoutMs) || policy.maxTimeoutMs < 1) {
+      throw new Error('maxTimeoutMs must be a positive integer');
+    }
+
     this.executor = executor;
     this.resolver = resolver;
     this.allowedOrigins = new Set(policy.allowedOrigins);
@@ -42,18 +102,61 @@ export class HostNetworkClient {
     this.allowedProtocols = new Set(policy.allowedProtocols ?? ['http:', 'https:']);
     this.maxRedirects = policy.maxRedirects;
     this.maxResponseBytes = policy.maxResponseBytes;
+    this.maxTimeoutMs = policy.maxTimeoutMs;
   }
 
-  async request(url: string, init: { method?: string; headers?: Record<string, string> } = {}): Promise<HostNetworkResponse> {
+  async request(
+    url: string,
+    init: { method?: string; headers?: Record<string, string> } = {}
+  ): Promise<HostNetworkResponse> {
     let current = url;
+
     for (let redirects = 0; ; redirects++) {
-      await this.authorize(current);
       if (redirects > this.maxRedirects) {
         this.records.push({ url: current, allowed: false, reason: 'REDIRECT_LIMIT' });
         throw new Error('Network policy denied redirect limit');
       }
 
-      const response = await this.executor.execute(current, init);
+      const approvedAddresses = await this.authorize(current);
+      const safeInit = {
+        ...init,
+        headers: sanitizeRequestHeaders(init.headers)
+      };
+      const controller = new AbortController();
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timeout = new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => {
+          controller.abort();
+          reject(new Error('Network policy request timeout'));
+        }, this.maxTimeoutMs);
+      });
+
+      let response: HostNetworkResponse;
+      try {
+        response = await Promise.race([
+          this.executor.execute(current, safeInit, {
+            approvedAddresses,
+            maxResponseBytes: this.maxResponseBytes,
+            redirectMode: 'manual',
+            signal: controller.signal
+          }),
+          timeout
+        ]);
+      } catch (error) {
+        if (controller.signal.aborted) {
+          this.records.push({ url: current, allowed: false, reason: 'TIMEOUT' });
+          throw new Error('Network policy request timeout');
+        }
+        throw error;
+      } finally {
+        if (timer !== undefined) clearTimeout(timer);
+      }
+
+      if (!approvedAddresses.includes(response.connectedAddress)) {
+        this.records.push({ url: current, allowed: false, reason: 'CONNECTED_ADDRESS_DENIED' });
+        throw new Error('Network policy denied connected address');
+      }
+
       if (!Number.isFinite(response.bodyBytes) || response.bodyBytes < 0) {
         this.records.push({ url: current, allowed: false, reason: 'PAYLOAD_SIZE_UNKNOWN' });
         throw new Error('Network policy requires measured response size');
@@ -62,8 +165,15 @@ export class HostNetworkClient {
         this.records.push({ url: current, allowed: false, reason: 'PAYLOAD_LIMIT' });
         throw new Error('Network policy denied response payload limit');
       }
+
       if (!response.redirectUrl) return response;
-      current = new URL(response.redirectUrl, current).toString();
+
+      const next = new URL(response.redirectUrl, current);
+      if (next.origin !== new URL(current).origin) {
+        this.records.push({ url: next.toString(), allowed: false, reason: 'CROSS_ORIGIN_REDIRECT_DENIED' });
+        throw new Error('Network policy denied cross-origin redirect');
+      }
+      current = next.toString();
     }
   }
 
@@ -71,7 +181,7 @@ export class HostNetworkClient {
     return this.records.map((record) => ({ ...record }));
   }
 
-  private async authorize(url: string): Promise<void> {
+  private async authorize(url: string): Promise<string[]> {
     let parsed: URL;
     try {
       parsed = new URL(url);
@@ -106,5 +216,6 @@ export class HostNetworkClient {
     }
 
     this.records.push({ url, allowed: true });
+    return [...new Set(resolved)];
   }
 }

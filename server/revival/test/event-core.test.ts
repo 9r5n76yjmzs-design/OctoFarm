@@ -179,3 +179,71 @@ test('capability revision reconciliation advances only on material newer revisio
   assert.equal(reconciler.applyEvent({ ...base, eventId: 'cap-3', payload: { capabilitiesRevision: 3 }, observedAt: 30 }), true);
   assert.equal(reconciler.get('p1', 'printer1'), 3);
 });
+
+
+test('normalized event boundary rejects provider-native and credential-shaped payload fields', () => {
+  assert.throws(
+    () => assertDomainEvent({
+      ...event('hostile', 1),
+      payload: {
+        authorization: 'Bearer SYNTHETIC-R3-SECRET',
+        native: { apiKey: 'SYNTHETIC-R3-SECRET' }
+      }
+    }),
+    /unsupported field/
+  );
+});
+
+test('replay suppression is scoped by provider instance identity', () => {
+  const clock = new FakeClock();
+  const scheduler = new FakeScheduler(clock);
+  const delivered = [];
+  const ingress = new BoundedEventIngress(scheduler, (value) => delivered.push(value), 4, 8);
+
+  assert.equal(ingress.enqueue(event('same-native-id', 1, 'provider-a')).accepted, true);
+  assert.equal(ingress.enqueue(event('same-native-id', 1, 'provider-b')).accepted, true);
+  scheduler.runDue();
+
+  assert.deepEqual(
+    delivered.map((value) => value.providerInstanceId).sort(),
+    ['provider-a', 'provider-b']
+  );
+});
+
+test('replay suppression memory remains bounded after sustained unique event traffic', () => {
+  let nextId = 0;
+  const scheduler = {
+    schedule(_delay, callback) {
+      callback();
+      return ++nextId;
+    }
+  };
+  const ingress = new BoundedEventIngress(scheduler, () => {}, 1, 32);
+
+  for (let i = 0; i < 5000; i++) {
+    assert.equal(ingress.enqueue(event(`unique-${i}`, i + 1)).accepted, true);
+  }
+
+  assert.equal(ingress.status().queued, 0);
+  assert.equal(ingress.status().dedupeEntries, 32);
+  assert.equal(ingress.status().dedupeCapacity, 32);
+});
+
+
+test('PrinterStateChanged cannot target a different printer than the event envelope', () => {
+  assert.throws(
+    () => assertDomainEvent({
+      ...event('cross-printer', 10, 'provider-a', 'printer-a', 'PrinterStateChanged'),
+      payload: {
+        state: {
+          printerId: 'printer-b',
+          connection: 'CONNECTED',
+          operation: 'IDLE',
+          capabilitiesRevision: 1,
+          observedAt: 10
+        }
+      }
+    }),
+    /must match event printerId/
+  );
+});
