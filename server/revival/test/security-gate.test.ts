@@ -554,3 +554,55 @@ test('sensitive-value guard redacts overlapping credentials longest-first', () =
   assert.equal(redacted.includes('SECRET-XYZ'), false);
   assert.equal(redacted, 'credential=[REDACTED]');
 });
+
+
+test('normalized provider snapshot rejects undeclared fields at the runtime boundary', () => {
+  const { assertProviderSnapshot } = require('../core/provider-contract.ts');
+  const base = {
+    identity: {
+      providerId: 'octoprint',
+      providerInstanceId: 'p1',
+      displayName: 'OctoPrint',
+      providerVersion: '2.0.0',
+      implementationVersion: 'revival'
+    },
+    capabilitiesRevision: 1,
+    capabilities: [],
+    availability: [],
+    state: {
+      printerId: 'printer1',
+      connection: 'CONNECTED',
+      operation: 'IDLE',
+      capabilitiesRevision: 1,
+      observedAt: 1
+    },
+    health: {
+      reachable: true,
+      authenticated: true,
+      transportConnected: true,
+      retrying: false,
+      degraded: false,
+      observedAt: 1
+    },
+    storages: [],
+    files: []
+  };
+
+  assert.doesNotThrow(() => assertProviderSnapshot(base));
+  assert.throws(
+    () => assertProviderSnapshot({ ...base, nativeTopLevel: 'raw' }),
+    /snapshot contains unexpected field/
+  );
+  assert.throws(
+    () => assertProviderSnapshot({ ...base, state: { ...base.state, nativeState: 'raw' } }),
+    /state contains unexpected field/
+  );
+  assert.throws(
+    () => assertProviderSnapshot({ ...base, identity: { ...base.identity, nativeIdentity: 'raw' } }),
+    /identity contains unexpected field/
+  );
+  assert.throws(
+    () => assertProviderSnapshot({ ...base, health: { ...base.health, nativeHealth: 'raw' } }),
+    /health contains unexpected field/
+  );
+});

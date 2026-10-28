@@ -123,6 +123,17 @@ function invariant(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`Invalid normalized provider value: ${message}`);
 }
 
+function assertOnlyKeys(
+  value: unknown,
+  allowed: readonly string[],
+  name: string
+): asserts value is Record<string, unknown> {
+  invariant(value !== null && typeof value === 'object' && !Array.isArray(value), `${name} must be an object`);
+  const allowedSet = new Set(allowed);
+  const unexpected = Object.keys(value).filter((key) => !allowedSet.has(key));
+  invariant(unexpected.length === 0, `${name} contains unexpected field(s): ${unexpected.join(', ')}`);
+}
+
 export function normalizeLogicalPath(value: string): string {
   invariant(typeof value === 'string' && value.length > 0, 'file path must be non-empty');
 
@@ -159,7 +170,54 @@ export function normalizeLogicalPath(value: string): string {
 }
 
 export function assertProviderSnapshot(value: ProviderSnapshot): ProviderSnapshot {
-  invariant(value && typeof value === 'object', 'snapshot must be an object');
+  assertOnlyKeys(value, [
+    'identity',
+    'capabilitiesRevision',
+    'capabilities',
+    'availability',
+    'state',
+    'health',
+    'connector',
+    'storages',
+    'files'
+  ], 'snapshot');
+  assertOnlyKeys(value.identity, [
+    'providerId',
+    'providerInstanceId',
+    'displayName',
+    'providerVersion',
+    'implementationVersion',
+    'protocolFamily',
+    'protocolVersion'
+  ], 'identity');
+  assertOnlyKeys(value.state, [
+    'printerId',
+    'connection',
+    'operation',
+    'capabilitiesRevision',
+    'observedAt'
+  ], 'state');
+  assertOnlyKeys(value.health, [
+    'reachable',
+    'authenticated',
+    'transportConnected',
+    'latencyMs',
+    'lastSuccessfulContact',
+    'retrying',
+    'degraded',
+    'reason',
+    'observedAt'
+  ], 'health');
+  if (value.connector !== undefined) {
+    assertOnlyKeys(value.connector, [
+      'id',
+      'family',
+      'connected',
+      'displayName',
+      'capabilities'
+    ], 'connector');
+  }
+
   invariant(value.identity?.providerId?.length > 0, 'providerId is required');
   invariant(value.identity?.providerInstanceId?.length > 0, 'providerInstanceId is required');
   invariant(Number.isInteger(value.capabilitiesRevision) && value.capabilitiesRevision >= 1, 'capabilitiesRevision must be >= 1');
@@ -169,6 +227,41 @@ export function assertProviderSnapshot(value: ProviderSnapshot): ProviderSnapsho
   invariant(Array.isArray(value.files), 'files must be an array');
   invariant(value.state?.printerId?.length > 0, 'state.printerId is required');
   invariant(typeof value.health?.reachable === 'boolean', 'health.reachable is required');
+
+  for (const capability of value.capabilities) {
+    assertOnlyKeys(capability, ['id', 'supported', 'version', 'constraints'], 'capability');
+  }
+  for (const availability of value.availability) {
+    assertOnlyKeys(availability, [
+      'capabilityId',
+      'available',
+      'reason',
+      'observedAt',
+      'capabilitiesRevision'
+    ], 'availability');
+  }
+  for (const storage of value.storages) {
+    assertOnlyKeys(storage, [
+      'id',
+      'name',
+      'printerSide',
+      'removable',
+      'available',
+      'writable',
+      'capabilities'
+    ], 'storage');
+  }
+  for (const file of value.files) {
+    assertOnlyKeys(file, [
+      'storageId',
+      'path',
+      'name',
+      'displayName',
+      'size',
+      'modifiedAt',
+      'metadata'
+    ], 'file');
+  }
 
   const supported = new Set(value.capabilities.filter((c) => c.supported).map((c) => c.id));
   for (const availability of value.availability) {
