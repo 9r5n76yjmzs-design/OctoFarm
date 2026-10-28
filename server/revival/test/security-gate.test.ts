@@ -504,3 +504,42 @@ test('canonical logical path normalization rejects empty-after-normalization pat
     );
   }
 });
+
+
+test('network mediation rejects authority, proxy, hop-by-hop, rewrite, and CRLF-bearing headers before execution', async () => {
+  const resolver = { async resolve() { return ['192.0.2.10']; } };
+  const seen = [];
+  const executor = {
+    async execute(_url, init) {
+      seen.push({ ...(init?.headers ?? {}) });
+      return response({}, { connectedAddress: '192.0.2.10' });
+    }
+  };
+  const client = new HostNetworkClient({
+    allowedOrigins: ['http://printer.local'],
+    allowedAddressesByHost: { 'printer.local': ['192.0.2.10'] },
+    maxRedirects: 0,
+    maxResponseBytes: 1000,
+    maxTimeoutMs: 100
+  }, executor, resolver);
+
+  for (const headers of [
+    { Host: 'other-vhost.local' },
+    { 'Proxy-Authorization': 'synthetic-proxy-secret' },
+    { Connection: 'keep-alive' },
+    { 'X-Forwarded-Host': 'other-vhost.local' },
+    { 'X-Original-URL': '/admin' },
+    { 'X-OctoPrint-Api-Version': '2.0.0\r\nHost: other-vhost.local' }
+  ]) {
+    await assert.rejects(
+      client.request('http://printer.local/api', { headers }),
+      /request header/
+    );
+  }
+
+  assert.equal(seen.length, 0);
+  await client.request('http://printer.local/api', {
+    headers: { 'X-OctoPrint-Api-Version': '2.0.0' }
+  });
+  assert.deepEqual(seen, [{ 'X-OctoPrint-Api-Version': '2.0.0' }]);
+});

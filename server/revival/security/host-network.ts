@@ -35,6 +35,42 @@ export interface HostNetworkPolicy {
   allowedProtocols?: string[];
 }
 
+const FORBIDDEN_REQUEST_HEADERS = new Set([
+  'host',
+  ':authority',
+  'connection',
+  'proxy-authorization',
+  'proxy-authenticate',
+  'transfer-encoding',
+  'upgrade',
+  'content-length',
+  'te',
+  'trailer',
+  'keep-alive',
+  'forwarded',
+  'x-forwarded-host',
+  'x-forwarded-proto',
+  'x-forwarded-port',
+  'x-original-url',
+  'x-rewrite-url'
+]);
+
+function sanitizeRequestHeaders(headers: Record<string, string> | undefined): Record<string, string> | undefined {
+  if (!headers) return undefined;
+  const output: Record<string, string> = {};
+  for (const [name, value] of Object.entries(headers)) {
+    const normalized = name.trim().toLowerCase();
+    if (!normalized || /[\r\n]/.test(name) || /[\r\n]/.test(value)) {
+      throw new Error('Network policy denied invalid request header');
+    }
+    if (FORBIDDEN_REQUEST_HEADERS.has(normalized)) {
+      throw new Error(`Network policy denied request header: ${normalized}`);
+    }
+    output[name] = value;
+  }
+  return output;
+}
+
 export class HostNetworkClient {
   private readonly executor: HostNetworkExecutor;
   private readonly resolver: HostNameResolver;
@@ -82,6 +118,10 @@ export class HostNetworkClient {
       }
 
       const approvedAddresses = await this.authorize(current);
+      const safeInit = {
+        ...init,
+        headers: sanitizeRequestHeaders(init.headers)
+      };
       const controller = new AbortController();
       let timer: ReturnType<typeof setTimeout> | undefined;
       const timeout = new Promise<never>((_resolve, reject) => {
@@ -94,7 +134,7 @@ export class HostNetworkClient {
       let response: HostNetworkResponse;
       try {
         response = await Promise.race([
-          this.executor.execute(current, init, {
+          this.executor.execute(current, safeInit, {
             approvedAddresses,
             maxResponseBytes: this.maxResponseBytes,
             redirectMode: 'manual',
