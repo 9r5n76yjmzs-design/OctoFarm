@@ -6,6 +6,10 @@ const { loadOctoPrintScenario } = require('../../test/provider-harness/protocol/
 const { OctoPrintProvider, OctoPrintProviderError } = require('../providers/octoprint/provider.ts');
 const { availabilityFor, baselineCapabilities, normalizeState } = require('../providers/octoprint/normalization.ts');
 
+class TestFetchTransport {
+  async request(url, init = {}) { return fetch(url, init); }
+}
+
 function fixturePath(group: string, name: string): string {
   return path.join(__dirname, '..', '..', 'test', 'provider-harness', 'fixtures', 'octoprint', group, name);
 }
@@ -15,7 +19,7 @@ async function snapshot(group: string, name: string) {
   const synthetic = new SyntheticOctoPrint(scenario);
   await synthetic.start();
   try {
-    const provider = new OctoPrintProvider(synthetic.endpoint(), 'provider-1', 'printer-1', undefined, () => 1000);
+    const provider = new OctoPrintProvider(synthetic.endpoint(), 'provider-1', 'printer-1', new TestFetchTransport(), () => 1000);
     return { value: await provider.snapshot(), requests: synthetic.capturedRequests() };
   } finally {
     await synthetic.stop();
@@ -93,7 +97,7 @@ test('capabilitiesRevision is monotonic and reflected in snapshots', async () =>
   const synthetic = new SyntheticOctoPrint(scenario);
   await synthetic.start();
   try {
-    const provider = new OctoPrintProvider(synthetic.endpoint(), 'provider-1', 'printer-1', undefined, () => 1000);
+    const provider = new OctoPrintProvider(synthetic.endpoint(), 'provider-1', 'printer-1', new TestFetchTransport(), () => 1000);
     provider.setCapabilitiesRevision(2);
     const value = await provider.snapshot();
     assert.equal(value.capabilitiesRevision, 2);
@@ -112,4 +116,11 @@ test('normalized boundary contains no OctoPrint-native top-level structures', as
     const forbidden = ['current','options','profiles','settingsApi','settingsSerial','apikey','api'];
     for (const key of forbidden) assert.equal(Object.prototype.hasOwnProperty.call(value,key), false, `${group} leaked ${key}`);
   }
+});
+
+test('provider requires host-supplied transport', () => {
+  assert.throws(
+    () => new OctoPrintProvider('http://local', 'p1', 'printer-1', undefined),
+    /Host-mediated HttpTransport is required/
+  );
 });
