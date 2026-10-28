@@ -18,7 +18,7 @@ function expectThrow(callback: () => unknown): void {
   assert.equal(threw, true);
 }
 
-export async function runHostSecurityGate() {
+async function runHostSecurityGate() {
   const checks = {
     'secret-safety': () => {
       const marker = 'I07-SENSITIVE-MARKER';
@@ -126,9 +126,11 @@ export async function runHostSecurityGate() {
         storages: [],
         files: [{ storageId: 'local', path: 'cube.gcode', name: 'cube.gcode', metadata: { privateValue: marker } }]
       };
-      assert.equal(JSON.stringify(projectProviderForBrowser(snapshot as any)).includes(marker), false);
+      assert.equal(JSON.stringify(projectProviderForBrowser(snapshot)).includes(marker), false);
     }
   };
 
   return runMandatorySecurityGate(checks);
 }
+
+module.exports = { runHostSecurityGate };

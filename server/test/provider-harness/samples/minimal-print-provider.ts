@@ -1,11 +1,38 @@
-import type {
-  Capability,
-  ProviderHealth,
-  ProviderIdentity,
-  PrinterState
-} from '../../../revival/core/provider-contract.ts';
+type Capability = {
+  id: string;
+  supported: boolean;
+  version?: string;
+  constraints?: Record<string, unknown>;
+};
 
-export class MinimalPrintProvider {
+type ProviderIdentity = {
+  providerId: string;
+  providerInstanceId: string;
+  displayName: string;
+  providerVersion: string;
+  implementationVersion: string;
+  protocolFamily?: string;
+  protocolVersion?: string;
+};
+
+type PrinterState = {
+  printerId: string;
+  connection: string;
+  operation: string;
+  capabilitiesRevision: number;
+  observedAt: number;
+};
+
+type ProviderHealth = {
+  reachable: boolean;
+  authenticated: boolean;
+  transportConnected: boolean;
+  retrying: boolean;
+  degraded: boolean;
+  observedAt: number;
+};
+
+class MinimalPrintProvider {
   private initialized = false;
   private connected = false;
   private terminal = false;
@@ -94,3 +121,5 @@ export class MinimalPrintProvider {
     return this.prints;
   }
 }
+
+module.exports = { MinimalPrintProvider };

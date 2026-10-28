@@ -1,19 +1,27 @@
-import type { ProviderIdentity } from '../../../revival/core/provider-contract.ts';
+type ProviderIdentity = {
+  providerId: string;
+  providerInstanceId: string;
+  displayName: string;
+  providerVersion: string;
+  implementationVersion: string;
+  protocolFamily?: string;
+  protocolVersion?: string;
+};
 
-export interface ComplianceCheckResult {
+type ComplianceCheckResult = {
   name: string;
   passed: boolean;
   message?: string;
-}
+};
 
-export interface CapabilityPackResult {
+type CapabilityPackResult = {
   capabilityFamily: string;
   declaredCapabilities: string[];
   passed: boolean;
   tests: ComplianceCheckResult[];
-}
+};
 
-export interface ProviderComplianceReport {
+type ProviderComplianceReport = {
   schemaVersion: 1;
   providerIdentity: ProviderIdentity;
   contractVersion: string;
@@ -32,9 +40,9 @@ export interface ProviderComplianceReport {
   skippedCapabilities: string[];
   compatibilitySuites: string[];
   warnings: string[];
-}
+};
 
-export function formatComplianceSummary(report: ProviderComplianceReport): string {
+function formatComplianceSummary(report: ProviderComplianceReport): string {
   const status = report.passed ? 'PASS' : 'FAIL';
   const packs = report.capabilityPacks.length
     ? report.capabilityPacks.map((pack) => pack.declaredCapabilities.join('+')).join(', ')
@@ -48,3 +56,5 @@ export function formatComplianceSummary(report: ProviderComplianceReport): strin
     `Capability packs: ${packs}`
   ].join('\n');
 }
+
+module.exports = { formatComplianceSummary };

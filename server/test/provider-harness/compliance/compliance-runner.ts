@@ -1,20 +1,14 @@
 const assert = require('node:assert/strict');
 const { runHostSecurityGate } = require('./host-security-suite.ts');
 const { assertProviderSnapshot } = require('../../../revival/core/provider-contract.ts');
-import type {
-  Capability,
-  ProviderHealth,
-  ProviderIdentity,
-  PrinterState
-} from '../../../revival/core/provider-contract.ts';
-import type {
-  CapabilityPackResult,
-  ComplianceCheckResult,
-  ProviderComplianceReport
-} from './compliance-report.ts';
 
 const HARNESS_VERSION = 'or11-i07-v1';
 const KNOWN_CAPABILITY_PACKS = ['PRINT', 'PAUSE', 'RESUME', 'CANCEL', 'RESTART'] as const;
+
+type Capability = {
+  id: string;
+  supported: boolean;
+};
 
 type Declaration = {
   contractVersion: string;
@@ -22,19 +16,25 @@ type Declaration = {
   complianceHints?: Record<string, unknown>;
 };
 
-export interface ComplianceProvider {
+type ComplianceProvider = {
   declaration(): Declaration;
-  identity(): ProviderIdentity;
+  identity(): Record<string, unknown>;
   capabilities(): Capability[];
-  state(): PrinterState;
-  health(): ProviderHealth;
+  state(): Record<string, unknown>;
+  health(): Record<string, unknown>;
   initialize(): Promise<void> | void;
   connect(): Promise<void> | void;
   disconnect(): Promise<void> | void;
   subscribe(sink: (event: unknown) => void): (() => void) | void;
   shutdown(): Promise<void> | void;
   print?(): Promise<unknown> | unknown;
-}
+};
+
+type ComplianceCheckResult = {
+  name: string;
+  passed: boolean;
+  message?: string;
+};
 
 type ProviderFactory = () => ComplianceProvider;
 type Pack = (provider: ComplianceProvider) => Promise<ComplianceCheckResult[]>;
@@ -61,17 +61,17 @@ const CAPABILITY_PACKS: Readonly<Record<string, Pack>> = Object.freeze({
   ]
 });
 
-export async function runProviderCompliance(factory: ProviderFactory): Promise<ProviderComplianceReport> {
+async function runProviderCompliance(factory: ProviderFactory) {
   const provider = factory();
   const declaration = provider.declaration();
   const identity = provider.identity();
   const coreTests: ComplianceCheckResult[] = [];
-  const capabilityPacks: CapabilityPackResult[] = [];
+  const capabilityPacks: Record<string, unknown>[] = [];
 
   coreTests.push(await capture('identity is normalized', () => {
     assert.equal(typeof identity.providerId, 'string');
-    assert.ok(identity.providerId.length > 0);
-    assert.ok(identity.providerInstanceId.length > 0);
+    assert.ok(String(identity.providerId).length > 0);
+    assert.ok(String(identity.providerInstanceId).length > 0);
   }));
 
   coreTests.push(await capture('initialize succeeds', () => provider.initialize()));
@@ -171,3 +171,5 @@ export async function runProviderCompliance(factory: ProviderFactory): Promise<P
     warnings: []
   };
 }
+
+module.exports = { runProviderCompliance };

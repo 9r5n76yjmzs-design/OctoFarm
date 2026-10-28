@@ -1,10 +1,23 @@
 {
-  "schemaVersion":1,"id":"OP2-COMPAT-001","purpose":"contract","description":"Synthetic OctoPrint 2.x compatibility-mode baseline.",
-  "requirements":["OR11-REQ-003","OR11-REQ-006","OR11-REQ-008","OR11-REQ-009","OR11-REQ-010","OR11-REQ-012","OR11-REQ-027","OR11-REQ-034","OR11-REQ-035"],
-  "source":{"kind":"engineering","reference":"OR-11 / OR11-I04"},"tags":["octoprint","v2-compat","http","normalization"],
-  "input":{"octoprint":{"mode":"V2_COMPAT","routes":[
-    {"method":"GET","path":"/api/version","status":200,"body":{"api":"0.1","server":"2.0.0","text":"OctoPrint 2.x compatibility synthetic"}},
-    {"method":"GET","path":"/api/connection","status":200,"body":{"current":{"state":"Operational","port":"/dev/ttyACM0","baudrate":250000,"printerProfile":"_default"},"options":{"ports":["/dev/ttyACM0"]}}},
-    {"method":"GET","path":"/api/files","status":200,"body":{"free":900000,"total":2000000,"files":[{"type":"machinecode","name":"compat.gcode","path":"compat.gcode","size":100}]}}
-  ]}},"expected":{"mode":"V2_COMPAT","normalizedBoundary":true}
+  "schemaVersion": 1,
+  "id": "OP2-COMPAT-001",
+  "purpose": "contract",
+  "description": "Synthetic OctoPrint 2.x compatibility-mode baseline with retained fault injection routes.",
+  "requirements": ["OR11-REQ-003", "OR11-REQ-006", "OR11-REQ-008", "OR11-REQ-009", "OR11-REQ-010", "OR11-REQ-012", "OR11-REQ-027", "OR11-REQ-034", "OR11-REQ-035"],
+  "source": { "kind": "engineering", "reference": "OR-11 / OR11-I03-I07" },
+  "tags": ["octoprint", "v2-compat", "http", "normalization", "fault-injection"],
+  "input": {
+    "octoprint": {
+      "mode": "V2_COMPAT",
+      "routes": [
+        { "method": "GET", "path": "/api/version", "status": 200, "body": { "api": "0.1", "server": "2.0.0", "text": "OctoPrint 2.x compatibility synthetic" } },
+        { "method": "GET", "path": "/api/connection", "status": 200, "body": { "current": { "state": "Operational", "port": "/dev/ttyACM0", "baudrate": 250000, "printerProfile": "_default" }, "options": { "ports": ["/dev/ttyACM0"] } } },
+        { "method": "GET", "path": "/api/files", "status": 200, "body": { "free": 900000, "total": 2000000, "files": [{ "type": "machinecode", "name": "compat.gcode", "path": "compat.gcode", "size": 100 }] } },
+        { "method": "GET", "path": "/api/malformed", "status": 200, "headers": { "content-type": "application/json" }, "malformedBody": "{not-valid-json" },
+        { "method": "GET", "path": "/api/delayed", "status": 200, "delayMs": 500, "body": { "delayed": true } },
+        { "method": "GET", "path": "/api/disconnect", "action": "disconnect" }
+      ]
+    }
+  },
+  "expected": { "mode": "V2_COMPAT", "normalizedBoundary": true, "faultInjection": true }
 }
