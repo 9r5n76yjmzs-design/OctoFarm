@@ -1,20 +1,11 @@
 {
-  "schemaVersion": 1,
-  "id": "OP2-NATIVE-001",
-  "purpose": "contract",
-  "description": "Synthetic OctoPrint 2.x native-mode baseline.",
-  "requirements": ["OR11-REQ-003", "OR11-REQ-034", "OR11-REQ-035"],
-  "source": { "kind": "engineering", "reference": "OR-11 / OR11-I03" },
-  "tags": ["octoprint", "v2-native", "http"],
-  "input": {
-    "octoprint": {
-      "mode": "V2_NATIVE",
-      "routes": [
-        { "method": "GET", "path": "/api/version", "status": 200, "body": { "api": "2.0", "server": "2.0.0", "text": "OctoPrint 2.x native synthetic" } },
-        { "method": "GET", "path": "/api/connection", "status": 200, "body": { "current": { "state": "Operational", "connector": { "id": "serial0", "type": "serial" } }, "connectors": [{ "id": "serial0", "type": "serial", "capabilities": ["connect"] }] } },
-        { "method": "POST", "path": "/api/job", "status": 204 }
-      ]
-    }
-  },
-  "expected": { "mode": "V2_NATIVE", "connectorModel": "native" }
+  "schemaVersion":1,"id":"OP2-NATIVE-001","purpose":"contract","description":"Synthetic OctoPrint 2.x native-mode baseline.",
+  "requirements":["OR11-REQ-003","OR11-REQ-008","OR11-REQ-009","OR11-REQ-010","OR11-REQ-012","OR11-REQ-027","OR11-REQ-034","OR11-REQ-035"],
+  "source":{"kind":"engineering","reference":"OR-11 / OR11-I04"},"tags":["octoprint","v2-native","http","normalization"],
+  "input":{"octoprint":{"mode":"V2_NATIVE","routes":[
+    {"method":"GET","path":"/api/version","status":200,"body":{"server":"2.0.0","text":"OctoPrint 2.x native synthetic"}},
+    {"method":"GET","path":"/api/connection","status":200,"body":{"current":{"state":"Operational","connector":{"id":"serial0","type":"serial","capabilities":["connect"]}},"connectors":[{"id":"serial0","type":"serial","capabilities":["connect"]}]}},
+    {"method":"GET","path":"/api/files","status":200,"body":{"storages":{"local":{"name":"Local","available":true,"writable":true,"files":[{"type":"machinecode","name":"native.gcode","path":"native.gcode","size":200}]},"printer":{"name":"Printer storage","printerSide":true,"available":true,"writable":false,"files":[]}}}},
+    {"method":"POST","path":"/api/job","status":204}
+  ]}},"expected":{"mode":"V2_NATIVE","connectorModel":"native","normalizedBoundary":true}
 }

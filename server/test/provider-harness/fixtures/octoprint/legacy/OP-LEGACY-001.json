@@ -1,19 +1,10 @@
 {
-  "schemaVersion": 1,
-  "id": "OP-LEGACY-001",
-  "purpose": "contract",
-  "description": "Synthetic OctoPrint 1.x compatibility baseline.",
-  "requirements": ["OR11-REQ-003", "OR11-REQ-033", "OR11-REQ-035"],
-  "source": { "kind": "engineering", "reference": "OR-11 / OR11-I03" },
-  "tags": ["octoprint", "legacy", "http"],
-  "input": {
-    "octoprint": {
-      "mode": "LEGACY",
-      "routes": [
-        { "method": "GET", "path": "/api/version", "status": 200, "body": { "api": "0.1", "server": "1.9.3", "text": "OctoPrint 1.x synthetic" } },
-        { "method": "GET", "path": "/api/connection", "status": 200, "body": { "current": { "state": "Operational", "port": "/dev/ttyUSB0", "baudrate": 115200, "printerProfile": "_default" }, "options": { "ports": ["/dev/ttyUSB0"] } } }
-      ]
-    }
-  },
-  "expected": { "mode": "LEGACY", "syntheticService": true }
+  "schemaVersion":1,"id":"OP-LEGACY-001","purpose":"contract","description":"Synthetic OctoPrint 1.x compatibility baseline.",
+  "requirements":["OR11-REQ-003","OR11-REQ-008","OR11-REQ-009","OR11-REQ-010","OR11-REQ-012","OR11-REQ-027","OR11-REQ-033","OR11-REQ-035"],
+  "source":{"kind":"engineering","reference":"OR-11 / OR11-I04"},"tags":["octoprint","legacy","http","normalization"],
+  "input":{"octoprint":{"mode":"LEGACY","routes":[
+    {"method":"GET","path":"/api/version","status":200,"body":{"api":"0.1","server":"1.9.3","text":"OctoPrint 1.x synthetic"}},
+    {"method":"GET","path":"/api/connection","status":200,"body":{"current":{"state":"Operational","port":"/dev/ttyUSB0","baudrate":115200,"printerProfile":"_default"},"options":{"ports":["/dev/ttyUSB0"]}}},
+    {"method":"GET","path":"/api/files","status":200,"body":{"free":1000000,"total":2000000,"files":[{"type":"machinecode","name":"cube.gcode","path":"jobs/cube.gcode","display":"Cube","size":1234,"date":1700000000}]}}
+  ]}},"expected":{"mode":"LEGACY","syntheticService":true,"normalizedBoundary":true}
 }
