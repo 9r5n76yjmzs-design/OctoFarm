@@ -229,6 +229,34 @@ test('telemetry is optional and structured without altering functional result', 
   }
 });
 
+test('telemetry failure is isolated from authorization and provider invocation semantics', async () => {
+  let allowedInvocations = 0;
+  const throwingTelemetry = { event() { throw new Error('telemetry unavailable'); } };
+
+  const allowedBroker = new HostOperationBroker(
+    { authorize() { return true; } },
+    [],
+    throwingTelemetry
+  );
+  assert.equal(
+    await allowedBroker.invoke('PRINT', {}, () => { allowedInvocations++; return 42; }),
+    42
+  );
+  assert.equal(allowedInvocations, 1);
+
+  let deniedInvocations = 0;
+  const deniedBroker = new HostOperationBroker(
+    { authorize() { return false; } },
+    [],
+    throwingTelemetry
+  );
+  await assert.rejects(
+    deniedBroker.invoke('PRINT', {}, () => { deniedInvocations++; }),
+    (error) => error instanceof SecurityDeniedError && error.code === 'AUTHORIZATION_DENIED'
+  );
+  assert.equal(deniedInvocations, 0);
+});
+
 test('browser projection drops arbitrary provider metadata, constraints, and diagnostic reason strings', () => {
   const marker = 'PRIVATE-BROWSER-MARKER';
   const snapshot = {
