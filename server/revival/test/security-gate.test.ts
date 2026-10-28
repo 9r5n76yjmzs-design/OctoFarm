@@ -9,6 +9,7 @@ const { validateProviderLogicalPath } = require('../security/path-policy.ts');
 const { ResourcePolicy } = require('../security/resource-policy.ts');
 const { projectProviderForBrowser } = require('../security/browser-projection.ts');
 const { MANDATORY_SECURITY_CHECKS, runMandatorySecurityGate } = require('../security/security-gate.ts');
+const { normalizeFiles } = require('../providers/octoprint/normalization.ts');
 const { SecretLeakDetector } = require('../../test/provider-harness/host/secret-leak-detector.ts');
 const { RecordingTelemetry } = require('../../test/provider-harness/host/recording-telemetry.ts');
 const { NoopTelemetry } = require('../../test/provider-harness/host/noop-telemetry.ts');
@@ -343,4 +344,98 @@ test('security artifacts remain clean when synthetic sensitive marker is present
     report: { gate: 'MANDATORY_SECURITY', passed: true }
   };
   detector.assertClean(artifacts);
+});
+
+
+test('network mediation denies cross-origin redirect even when both origins are otherwise allowed', async () => {
+  const seen = [];
+  const resolver = {
+    async resolve(hostname) {
+      if (hostname === 'a.local') return ['192.0.2.10'];
+      if (hostname === 'b.local') return ['192.0.2.20'];
+      return [];
+    }
+  };
+  const executor = {
+    async execute(url, init) {
+      seen.push({ url, headers: { ...(init?.headers ?? {}) } });
+      if (url === 'http://a.local/start') {
+        return response({}, {
+          status: 302,
+          redirectUrl: 'http://b.local/next',
+          connectedAddress: '192.0.2.10'
+        });
+      }
+      return response({}, { connectedAddress: '192.0.2.20' });
+    }
+  };
+  const client = new HostNetworkClient({
+    allowedOrigins: ['http://a.local', 'http://b.local'],
+    allowedAddressesByHost: {
+      'a.local': ['192.0.2.10'],
+      'b.local': ['192.0.2.20']
+    },
+    maxRedirects: 1,
+    maxResponseBytes: 1000,
+    maxTimeoutMs: 100
+  }, executor, resolver);
+
+  await assert.rejects(
+    client.request('http://a.local/start', { headers: { Authorization: 'synthetic-provider-credential' } }),
+    /cross-origin redirect/
+  );
+  assert.equal(seen.length, 1);
+});
+
+test('network timeout remains bounded when executor ignores AbortSignal', async () => {
+  const resolver = { async resolve() { return ['192.0.2.10']; } };
+  const executor = { async execute() { return new Promise(() => {}); } };
+  const client = new HostNetworkClient({
+    allowedOrigins: ['http://printer.local'],
+    allowedAddressesByHost: { 'printer.local': ['192.0.2.10'] },
+    maxRedirects: 0,
+    maxResponseBytes: 1000,
+    maxTimeoutMs: 10
+  }, executor, resolver);
+
+  const started = Date.now();
+  await assert.rejects(client.request('http://printer.local/hang'), /timeout/);
+  assert.ok(Date.now() - started < 250);
+});
+
+test('unknown operations fail closed before authorization or provider invocation', async () => {
+  let authorizationCalls = 0;
+  let providerCalls = 0;
+  const broker = new HostOperationBroker({
+    authorize() {
+      authorizationCalls++;
+      return true;
+    }
+  });
+
+  await assert.rejects(
+    broker.invoke('FIRMWARE_FLASH', {}, () => {
+      providerCalls++;
+      return 'bad';
+    }),
+    (error) => error instanceof SecurityDeniedError && error.code === 'UNKNOWN_OPERATION'
+  );
+  assert.equal(authorizationCalls, 0);
+  assert.equal(providerCalls, 0);
+  assert.equal(broker.isKnown('FIRMWARE_FLASH'), false);
+  assert.equal(broker.isPrivileged('PROVIDER_SETTINGS'), true);
+});
+
+test('encoded traversal is rejected before normalized FileRef crosses provider boundary', () => {
+  for (const bad of [
+    '%2e%2e/escape.gcode',
+    '%252e%252e%252fescape.gcode',
+    '..\\escape.gcode',
+    'nul%00byte.gcode'
+  ]) {
+    assert.throws(
+      () => normalizeFiles({ files: [{ type: 'machinecode', name: 'bad.gcode', path: bad }] }),
+      /file path/
+    );
+  }
 });

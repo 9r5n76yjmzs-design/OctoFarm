@@ -83,16 +83,25 @@ export class HostNetworkClient {
 
       const approvedAddresses = await this.authorize(current);
       const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), this.maxTimeoutMs);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const timeout = new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => {
+          controller.abort();
+          reject(new Error('Network policy request timeout'));
+        }, this.maxTimeoutMs);
+      });
 
       let response: HostNetworkResponse;
       try {
-        response = await this.executor.execute(current, init, {
-          approvedAddresses,
-          maxResponseBytes: this.maxResponseBytes,
-          redirectMode: 'manual',
-          signal: controller.signal
-        });
+        response = await Promise.race([
+          this.executor.execute(current, init, {
+            approvedAddresses,
+            maxResponseBytes: this.maxResponseBytes,
+            redirectMode: 'manual',
+            signal: controller.signal
+          }),
+          timeout
+        ]);
       } catch (error) {
         if (controller.signal.aborted) {
           this.records.push({ url: current, allowed: false, reason: 'TIMEOUT' });
@@ -100,7 +109,7 @@ export class HostNetworkClient {
         }
         throw error;
       } finally {
-        clearTimeout(timer);
+        if (timer !== undefined) clearTimeout(timer);
       }
 
       if (!approvedAddresses.includes(response.connectedAddress)) {
@@ -118,7 +127,13 @@ export class HostNetworkClient {
       }
 
       if (!response.redirectUrl) return response;
-      current = new URL(response.redirectUrl, current).toString();
+
+      const next = new URL(response.redirectUrl, current);
+      if (next.origin !== new URL(current).origin) {
+        this.records.push({ url: next.toString(), allowed: false, reason: 'CROSS_ORIGIN_REDIRECT_DENIED' });
+        throw new Error('Network policy denied cross-origin redirect');
+      }
+      current = next.toString();
     }
   }
 
