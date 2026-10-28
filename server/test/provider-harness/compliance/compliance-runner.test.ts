@@ -56,3 +56,15 @@ test('CI invokes the same compliance entry point used locally and does not requi
   assert.ok(workflow.includes('actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803'));
   assert.ok(workflow.includes('actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38'));
 });
+
+
+test('host-owned Security Gate remains deterministic across repeated compliance runs', async () => {
+  const signatures = [];
+  for (let i = 0; i < 5; i++) {
+    const report = await runProviderCompliance(() => new MinimalPrintProvider());
+    assert.equal(report.passed, true, JSON.stringify(report, null, 2));
+    assert.equal(report.security.passed, true, JSON.stringify(report.security, null, 2));
+    signatures.push(JSON.stringify(report.security.tests));
+  }
+  assert.equal(new Set(signatures).size, 1);
+});
