@@ -8,6 +8,7 @@ const { serializeProviderDiagnostic } = require('../security/diagnostics.ts');
 const { validateProviderLogicalPath } = require('../security/path-policy.ts');
 const { ResourcePolicy } = require('../security/resource-policy.ts');
 const { projectProviderForBrowser } = require('../security/browser-projection.ts');
+const { SensitiveValueGuard } = require('../security/sensitive-values.ts');
 const { MANDATORY_SECURITY_CHECKS, runMandatorySecurityGate } = require('../security/security-gate.ts');
 const { normalizeFiles } = require('../providers/octoprint/normalization.ts');
 const { SecretLeakDetector } = require('../../test/provider-harness/host/secret-leak-detector.ts');
@@ -143,6 +144,7 @@ test('privileged classification is host-owned and cannot be demoted by the calle
 
 test('safe diagnostic serialization allowlists fields and redacts known sensitive values', () => {
   const marker = 'SYNTHETIC-I06-MARKER-7f31';
+  const guard = new SensitiveValueGuard([marker]);
   const raw = {
     category: 'PROVIDER_ERROR',
     operation: 'snapshot',
@@ -155,7 +157,7 @@ test('safe diagnostic serialization allowlists fields and redacts known sensitiv
     stack: `stack ${marker}`,
     cause: new Error(marker)
   };
-  const safe = serializeProviderDiagnostic(raw, { providerInstanceId: 'p1', printerId: 'printer1', httpStatus: 500 }, [marker]);
+  const safe = serializeProviderDiagnostic(raw, { providerInstanceId: 'p1', printerId: 'printer1', httpStatus: 500 }, guard);
   const detector = new SecretLeakDetector();
   detector.seed(marker);
   detector.assertClean(safe);
@@ -168,14 +170,14 @@ test('safe diagnostic serialization allowlists fields and redacts known sensitiv
     () => serializeProviderDiagnostic({
       category: { nested: { privateValue: marker } },
       operation: 'snapshot'
-    }),
+    }, {}, guard),
     /category/
   );
   assert.throws(
     () => serializeProviderDiagnostic({
       category: 'PROVIDER_ERROR',
       operation: { nested: marker }
-    }),
+    }, {}, guard),
     /operation/
   );
 });
@@ -260,6 +262,7 @@ test('telemetry failure is isolated from authorization and provider invocation s
 
 test('browser projection drops arbitrary provider metadata, constraints, and diagnostic reason strings', () => {
   const marker = 'PRIVATE-BROWSER-MARKER';
+  const guard = new SensitiveValueGuard([marker]);
   const snapshot = {
     identity: { providerId:'octoprint', providerInstanceId:'p1', displayName:'OctoPrint', providerVersion:'2.0.0', implementationVersion:'revival' },
     capabilitiesRevision:1,
@@ -273,7 +276,7 @@ test('browser projection drops arbitrary provider metadata, constraints, and dia
     endpoint:'http://printer.local',
     privateValue:marker
   };
-  const projected = projectProviderForBrowser(snapshot);
+  const projected = projectProviderForBrowser(snapshot, guard);
   const serialized = JSON.stringify(projected);
   assert.equal(serialized.includes('printer.local'), false);
   assert.equal(serialized.includes(marker), false);
@@ -327,6 +330,7 @@ test('OctoPrint provider source has no direct fetch or node HTTP networking fall
 
 test('security artifacts remain clean when synthetic sensitive marker is present only in raw input', () => {
   const marker = 'SYNTHETIC-I06-MARKER-a29c';
+  const guard = new SensitiveValueGuard([marker]);
   const detector = new SecretLeakDetector();
   detector.seed(marker);
 
@@ -339,7 +343,7 @@ test('security artifacts remain clean when synthetic sensitive marker is present
       retryable: false,
       userSafeMessage: `bad input ${marker}`,
       raw: { privateValue: marker }
-    }, {}, [marker]),
+    }, {}, guard),
     telemetry: { name: 'security.authorization', attributes: { operation: 'PRINT', allowed: false } },
     report: { gate: 'MANDATORY_SECURITY', passed: true }
   };
@@ -433,6 +437,67 @@ test('encoded traversal is rejected before normalized FileRef crosses provider b
     '..\\escape.gcode',
     'nul%00byte.gcode'
   ]) {
+    assert.throws(
+      () => normalizeFiles({ files: [{ type: 'machinecode', name: 'bad.gcode', path: bad }] }),
+      /file path/
+    );
+  }
+});
+
+
+test('diagnostic serialization requires host sensitive-value context and fails closed when omitted', () => {
+  assert.throws(
+    () => serializeProviderDiagnostic({
+      category: 'PROVIDER_ERROR',
+      userSafeMessage: 'provider message'
+    }),
+    /SensitiveValueGuard is required/
+  );
+});
+
+test('browser projection redacts sensitive values in allowed fields and drops unexpected state fields', () => {
+  const marker = 'SYNTHETIC-R3-BROWSER-SECRET';
+  const guard = new SensitiveValueGuard([marker]);
+  const snapshot = {
+    identity: {
+      providerId: 'octoprint',
+      providerInstanceId: 'p1',
+      displayName: `OctoPrint ${marker}`,
+      providerVersion: '2.0.0',
+      implementationVersion: 'revival'
+    },
+    capabilitiesRevision: 1,
+    capabilities: [],
+    availability: [],
+    state: {
+      printerId: 'printer1',
+      connection: 'CONNECTED',
+      operation: 'IDLE',
+      capabilitiesRevision: 1,
+      observedAt: 1,
+      privateValue: marker
+    },
+    health: {
+      reachable: true,
+      authenticated: true,
+      transportConnected: true,
+      retrying: false,
+      degraded: false,
+      observedAt: 1
+    },
+    storages: [],
+    files: []
+  };
+
+  const projected = projectProviderForBrowser(snapshot, guard);
+  const serialized = JSON.stringify(projected);
+  assert.equal(serialized.includes(marker), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(projected.state, 'privateValue'), false);
+  assert.equal(projected.identity.displayName.includes('[REDACTED]'), true);
+});
+
+test('canonical logical path normalization rejects empty-after-normalization paths', () => {
+  for (const bad of ['.', './', '%2e', '%2e/']) {
     assert.throws(
       () => normalizeFiles({ files: [{ type: 'machinecode', name: 'bad.gcode', path: bad }] }),
       /file path/
