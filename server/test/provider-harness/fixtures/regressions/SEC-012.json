@@ -1,0 +1,1 @@
+{"schemaVersion":1,"id":"SEC-012","purpose":"contract","description":"Browser-facing provider projection contains only normalized public data.","requirements":["OR11-REQ-039"],"source":{"kind":"engineering","reference":"OR-11 / OR11-I06"},"tags":["security","browser"],"input":{"privateConfigurationPresent":true},"expected":{"privateConfigurationProjected":false}}

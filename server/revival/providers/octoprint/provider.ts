@@ -19,12 +19,6 @@ export interface HttpTransport {
   request(url: string, init?: { method?: string; headers?: Record<string, string> }): Promise<HttpResponseLike>;
 }
 
-export class FetchTransport implements HttpTransport {
-  async request(url: string, init: { method?: string; headers?: Record<string, string> } = {}): Promise<HttpResponseLike> {
-    return fetch(url, init);
-  }
-}
-
 export type ProviderErrorCategory =
   | 'AUTHENTICATION'
   | 'AUTHORIZATION'
@@ -66,9 +60,12 @@ export class OctoPrintProvider {
     endpoint: string,
     providerInstanceId: string,
     printerId: string,
-    transport: HttpTransport = new FetchTransport(),
+    transport: HttpTransport,
     now: () => number = Date.now
   ) {
+    if (!transport || typeof transport.request !== 'function') {
+      throw new Error('Host-mediated HttpTransport is required');
+    }
     this.endpoint = endpoint;
     this.providerInstanceId = providerInstanceId;
     this.printerId = printerId;
@@ -100,7 +97,7 @@ export class OctoPrintProvider {
       providerInstanceId: this.providerInstanceId,
       displayName: 'OctoPrint',
       providerVersion: negotiated.serverVersion,
-      implementationVersion: 'revival-i04',
+      implementationVersion: 'revival-i06',
       protocolFamily: 'OctoPrint',
       protocolVersion: negotiated.protocolVersion
     };
