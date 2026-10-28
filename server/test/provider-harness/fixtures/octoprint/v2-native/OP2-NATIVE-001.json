@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "OP2-NATIVE-001",
+  "purpose": "contract",
+  "description": "Synthetic OctoPrint 2.x native-mode baseline.",
+  "requirements": ["OR11-REQ-003", "OR11-REQ-034", "OR11-REQ-035"],
+  "source": { "kind": "engineering", "reference": "OR-11 / OR11-I03" },
+  "tags": ["octoprint", "v2-native", "http"],
+  "input": {
+    "octoprint": {
+      "mode": "V2_NATIVE",
+      "routes": [
+        { "method": "GET", "path": "/api/version", "status": 200, "body": { "api": "2.0", "server": "2.0.0", "text": "OctoPrint 2.x native synthetic" } },
+        { "method": "GET", "path": "/api/connection", "status": 200, "body": { "current": { "state": "Operational", "connector": { "id": "serial0", "type": "serial" } }, "connectors": [{ "id": "serial0", "type": "serial", "capabilities": ["connect"] }] } },
+        { "method": "POST", "path": "/api/job", "status": 204 }
+      ]
+    }
+  },
+  "expected": { "mode": "V2_NATIVE", "connectorModel": "native" }
+}
