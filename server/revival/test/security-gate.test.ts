@@ -52,7 +52,7 @@ test('network mediation enforces destination, protocol, DNS/IP pinning, redirect
   await assert.rejects(client.request('http://other.local/api'), /destination/);
   await assert.rejects(client.request('file:///not-allowed'), /protocol/);
   await assert.rejects(client.request('http://user:pass@printer.local/api'), /credentials/);
-  await assert.rejects(client.request('http://printer.local/redirect'), /destination/);
+  await assert.rejects(client.request('http://printer.local/redirect'), /cross-origin redirect/);
   await assert.rejects(client.request('http://printer.local/large'), /payload/);
 
   dns.set('printer.local', ['127.0.0.1']);
