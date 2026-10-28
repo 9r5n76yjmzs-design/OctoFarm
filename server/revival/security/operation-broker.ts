@@ -44,16 +44,23 @@ export class HostOperationBroker {
     const authorizationContext = { ...context, privileged };
     const allowed = this.authorization.authorize(operation, authorizationContext);
 
-    this.telemetry?.event('security.authorization', {
-      service: 'octofarm-revival',
-      component: 'host-security',
-      domain: 'provider-operation',
-      operation,
-      privileged,
-      allowed
-    });
+    try {
+      this.telemetry?.event('security.authorization', {
+        service: 'octofarm-revival',
+        component: 'host-security',
+        domain: 'provider-operation',
+        operation,
+        privileged,
+        allowed
+      });
+    } catch {
+      // Telemetry is observational. Failure must not change authorization
+      // semantics or provider invocation behavior.
+    }
 
-    if (!allowed) throw new SecurityDeniedError('AUTHORIZATION_DENIED', 'Operation denied by host authorization');
+    if (!allowed) {
+      throw new SecurityDeniedError('AUTHORIZATION_DENIED', 'Operation denied by host authorization');
+    }
     return providerCall();
   }
 

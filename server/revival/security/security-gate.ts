@@ -54,7 +54,7 @@ export async function runMandatorySecurityGate(
 
   return {
     gate: 'MANDATORY_SECURITY',
-    passed: results.every((result) => result.passed),
+    passed: !bypassRequested && results.every((result) => result.passed),
     bypassRequested,
     results
   };
