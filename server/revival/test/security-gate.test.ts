@@ -606,3 +606,19 @@ test('normalized provider snapshot rejects undeclared fields at the runtime boun
     /health contains unexpected field/
   );
 });
+
+
+test('sensitive-value guard redacts URI and form-encoded credential representations', () => {
+  const sensitive = 'SYNTHETIC R5 VALUE/42';
+  const guard = new SensitiveValueGuard([sensitive]);
+  const encoded = encodeURIComponent(sensitive);
+  const lowerEncoded = encoded.replace(/%[0-9A-F]{2}/g, (match) => match.toLowerCase());
+  const formEncoded = encoded.replace(/%20/g, '+');
+
+  for (const representation of [sensitive, encoded, lowerEncoded, formEncoded]) {
+    const redacted = guard.redact(`provider=${representation}`);
+    assert.equal(redacted.includes('SYNTHETIC'), false);
+    assert.equal(redacted.includes('VALUE'), false);
+    assert.equal(redacted, 'provider=[REDACTED]');
+  }
+});
