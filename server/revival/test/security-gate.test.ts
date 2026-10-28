@@ -52,7 +52,7 @@ test('network mediation enforces destination, protocol, DNS/IP pinning, redirect
   await assert.rejects(client.request('http://other.local/api'), /destination/);
   await assert.rejects(client.request('file:///not-allowed'), /protocol/);
   await assert.rejects(client.request('http://user:pass@printer.local/api'), /credentials/);
-  await assert.rejects(client.request('http://printer.local/redirect'), /cross-origin redirect/);
+  await assert.rejects(client.request('http://printer.local/redirect'), /destination/);
   await assert.rejects(client.request('http://printer.local/large'), /payload/);
 
   dns.set('printer.local', ['127.0.0.1']);
@@ -505,6 +505,7 @@ test('canonical logical path normalization rejects empty-after-normalization pat
   }
 });
 
+
 test('network mediation rejects authority, proxy, hop-by-hop, rewrite, and CRLF-bearing headers before execution', async () => {
   const resolver = { async resolve() { return ['192.0.2.10']; } };
   const seen = [];
@@ -541,4 +542,175 @@ test('network mediation rejects authority, proxy, hop-by-hop, rewrite, and CRLF-
     headers: { 'X-OctoPrint-Api-Version': '2.0.0' }
   });
   assert.deepEqual(seen, [{ 'X-OctoPrint-Api-Version': '2.0.0' }]);
+});
+
+
+test('sensitive-value guard redacts overlapping credentials longest-first', () => {
+  const shorter = 'token';
+  const longer = 'token-SECRET-XYZ';
+  const guard = new SensitiveValueGuard([shorter, longer]);
+  const redacted = guard.redact(`credential=${longer}`);
+
+  assert.equal(redacted.includes('SECRET-XYZ'), false);
+  assert.equal(redacted, 'credential=[REDACTED]');
+});
+
+
+test('normalized provider snapshot rejects undeclared fields at the runtime boundary', () => {
+  const { assertProviderSnapshot } = require('../core/provider-contract.ts');
+  const base = {
+    identity: {
+      providerId: 'octoprint',
+      providerInstanceId: 'p1',
+      displayName: 'OctoPrint',
+      providerVersion: '2.0.0',
+      implementationVersion: 'revival'
+    },
+    capabilitiesRevision: 1,
+    capabilities: [],
+    availability: [],
+    state: {
+      printerId: 'printer1',
+      connection: 'CONNECTED',
+      operation: 'IDLE',
+      capabilitiesRevision: 1,
+      observedAt: 1
+    },
+    health: {
+      reachable: true,
+      authenticated: true,
+      transportConnected: true,
+      retrying: false,
+      degraded: false,
+      observedAt: 1
+    },
+    storages: [],
+    files: []
+  };
+
+  assert.doesNotThrow(() => assertProviderSnapshot(base));
+  assert.throws(
+    () => assertProviderSnapshot({ ...base, nativeTopLevel: 'raw' }),
+    /snapshot contains unexpected field/
+  );
+  assert.throws(
+    () => assertProviderSnapshot({ ...base, state: { ...base.state, nativeState: 'raw' } }),
+    /state contains unexpected field/
+  );
+  assert.throws(
+    () => assertProviderSnapshot({ ...base, identity: { ...base.identity, nativeIdentity: 'raw' } }),
+    /identity contains unexpected field/
+  );
+  assert.throws(
+    () => assertProviderSnapshot({ ...base, health: { ...base.health, nativeHealth: 'raw' } }),
+    /health contains unexpected field/
+  );
+});
+
+
+test('sensitive-value guard redacts URI and form-encoded credential representations', () => {
+  const sensitive = 'SYNTHETIC R5 VALUE/42';
+  const guard = new SensitiveValueGuard([sensitive]);
+  const encoded = encodeURIComponent(sensitive);
+  const lowerEncoded = encoded.replace(/%[0-9A-F]{2}/g, (match) => match.toLowerCase());
+  const formEncoded = encoded.replace(/%20/g, '+');
+
+  for (const representation of [sensitive, encoded, lowerEncoded, formEncoded]) {
+    const redacted = guard.redact(`provider=${representation}`);
+    assert.equal(redacted.includes('SYNTHETIC'), false);
+    assert.equal(redacted.includes('VALUE'), false);
+    assert.equal(redacted, 'provider=[REDACTED]');
+  }
+});
+
+
+test('normalized provider snapshot rejects invalid values inside allowed fields', () => {
+  const { assertProviderSnapshot } = require('../core/provider-contract.ts');
+  const base = {
+    identity: {
+      providerId: 'octoprint',
+      providerInstanceId: 'p1',
+      displayName: 'OctoPrint',
+      providerVersion: '2.0.0',
+      implementationVersion: 'revival'
+    },
+    capabilitiesRevision: 1,
+    capabilities: [],
+    availability: [],
+    state: {
+      printerId: 'printer1',
+      connection: 'CONNECTED',
+      operation: 'IDLE',
+      capabilitiesRevision: 1,
+      observedAt: 1
+    },
+    health: {
+      reachable: true,
+      authenticated: true,
+      transportConnected: true,
+      retrying: false,
+      degraded: false,
+      observedAt: 1
+    },
+    storages: [],
+    files: []
+  };
+
+  assert.throws(
+    () => assertProviderSnapshot({ ...base, state: { ...base.state, connection: 'NATIVE_SERIAL_OPEN' } }),
+    /state.connection must be normalized/
+  );
+  assert.throws(
+    () => assertProviderSnapshot({ ...base, state: { ...base.state, operation: 'OCTOPRINT_OPERATIONAL' } }),
+    /state.operation must be normalized/
+  );
+  assert.throws(
+    () => assertProviderSnapshot({ ...base, state: { ...base.state, observedAt: Number.NaN } }),
+    /state.observedAt must be finite/
+  );
+  assert.throws(
+    () => assertProviderSnapshot({ ...base, health: { ...base.health, authenticated: 'yes' } }),
+    /health.authenticated is required/
+  );
+  assert.throws(
+    () => assertProviderSnapshot({ ...base, health: { ...base.health, observedAt: Number.POSITIVE_INFINITY } }),
+    /health.observedAt must be finite/
+  );
+});
+
+
+test('async authorization denial is awaited before provider invocation', async () => {
+  let providerCalls = 0;
+  const broker = new HostOperationBroker({
+    async authorize() {
+      return false;
+    }
+  });
+
+  await assert.rejects(
+    broker.invoke('PRINT', {}, () => {
+      providerCalls++;
+      return 'bad';
+    }),
+    (error) => error instanceof SecurityDeniedError && error.code === 'AUTHORIZATION_DENIED'
+  );
+  assert.equal(providerCalls, 0);
+});
+
+test('non-boolean authorization decisions fail closed', async () => {
+  let providerCalls = 0;
+  const broker = new HostOperationBroker({
+    authorize() {
+      return 'yes';
+    }
+  });
+
+  await assert.rejects(
+    broker.invoke('PRINT', {}, () => {
+      providerCalls++;
+      return 'bad';
+    }),
+    (error) => error instanceof SecurityDeniedError && error.code === 'AUTHORIZATION_INVALID'
+  );
+  assert.equal(providerCalls, 0);
 });

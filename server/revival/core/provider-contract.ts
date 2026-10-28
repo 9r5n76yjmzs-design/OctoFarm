@@ -123,6 +123,17 @@ function invariant(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`Invalid normalized provider value: ${message}`);
 }
 
+function assertOnlyKeys(
+  value: unknown,
+  allowed: readonly string[],
+  name: string
+): asserts value is Record<string, unknown> {
+  invariant(value !== null && typeof value === 'object' && !Array.isArray(value), `${name} must be an object`);
+  const allowedSet = new Set(allowed);
+  const unexpected = Object.keys(value).filter((key) => !allowedSet.has(key));
+  invariant(unexpected.length === 0, `${name} contains unexpected field(s): ${unexpected.join(', ')}`);
+}
+
 export function normalizeLogicalPath(value: string): string {
   invariant(typeof value === 'string' && value.length > 0, 'file path must be non-empty');
 
@@ -158,22 +169,156 @@ export function normalizeLogicalPath(value: string): string {
   return normalized;
 }
 
+const CAPABILITY_IDS = new Set<CapabilityId>([
+  'PRINT','PAUSE','RESUME','CANCEL','RESTART',
+  'FILE_LIST','FILE_UPLOAD','FILE_SELECT','FILE_DELETE','FILE_MOVE','FILE_COPY',
+  'STORAGE_LIST','STORAGE_WRITE','STORAGE_REMOVE','STORAGE_REFRESH'
+]);
+
+const CONNECTION_STATES = new Set<ConnectionState>([
+  'UNKNOWN','DISCONNECTED','CONNECTING','CONNECTED','RECONNECTING','FAILED'
+]);
+
+const OPERATIONAL_STATES = new Set<OperationalState>([
+  'UNKNOWN','IDLE','PREPARING','PRINTING','PAUSED','COMPLETING','ERROR','MAINTENANCE','UNAVAILABLE'
+]);
+
+const CONNECTOR_FAMILIES = new Set<ConnectorRef['family']>([
+  'SERIAL','NETWORK','OTHER','UNKNOWN'
+]);
+
+function nonEmptyString(value: unknown, name: string): asserts value is string {
+  invariant(typeof value === 'string' && value.length > 0, `${name} must be a non-empty string`);
+}
+
+function optionalString(value: unknown, name: string): void {
+  if (value !== undefined) nonEmptyString(value, name);
+}
+
+function finiteNumber(value: unknown, name: string): asserts value is number {
+  invariant(typeof value === 'number' && Number.isFinite(value), `${name} must be finite`);
+}
+
+function optionalRecord(value: unknown, name: string): void {
+  if (value === undefined) return;
+  invariant(value !== null && typeof value === 'object' && !Array.isArray(value), `${name} must be an object`);
+}
+
 export function assertProviderSnapshot(value: ProviderSnapshot): ProviderSnapshot {
-  invariant(value && typeof value === 'object', 'snapshot must be an object');
-  invariant(value.identity?.providerId?.length > 0, 'providerId is required');
-  invariant(value.identity?.providerInstanceId?.length > 0, 'providerInstanceId is required');
+  assertOnlyKeys(value, [
+    'identity','capabilitiesRevision','capabilities','availability','state','health','connector','storages','files'
+  ], 'snapshot');
+  assertOnlyKeys(value.identity, [
+    'providerId','providerInstanceId','displayName','providerVersion','implementationVersion','protocolFamily','protocolVersion'
+  ], 'identity');
+  assertOnlyKeys(value.state, [
+    'printerId','connection','operation','capabilitiesRevision','observedAt'
+  ], 'state');
+  assertOnlyKeys(value.health, [
+    'reachable','authenticated','transportConnected','latencyMs','lastSuccessfulContact','retrying','degraded','reason','observedAt'
+  ], 'health');
+
+  nonEmptyString(value.identity.providerId, 'identity.providerId');
+  nonEmptyString(value.identity.providerInstanceId, 'identity.providerInstanceId');
+  nonEmptyString(value.identity.displayName, 'identity.displayName');
+  nonEmptyString(value.identity.providerVersion, 'identity.providerVersion');
+  nonEmptyString(value.identity.implementationVersion, 'identity.implementationVersion');
+  optionalString(value.identity.protocolFamily, 'identity.protocolFamily');
+  optionalString(value.identity.protocolVersion, 'identity.protocolVersion');
+
   invariant(Number.isInteger(value.capabilitiesRevision) && value.capabilitiesRevision >= 1, 'capabilitiesRevision must be >= 1');
   invariant(Array.isArray(value.capabilities), 'capabilities must be an array');
   invariant(Array.isArray(value.availability), 'availability must be an array');
   invariant(Array.isArray(value.storages), 'storages must be an array');
   invariant(Array.isArray(value.files), 'files must be an array');
-  invariant(value.state?.printerId?.length > 0, 'state.printerId is required');
-  invariant(typeof value.health?.reachable === 'boolean', 'health.reachable is required');
+
+  nonEmptyString(value.state.printerId, 'state.printerId');
+  invariant(CONNECTION_STATES.has(value.state.connection), 'state.connection must be normalized');
+  invariant(OPERATIONAL_STATES.has(value.state.operation), 'state.operation must be normalized');
+  invariant(
+    Number.isInteger(value.state.capabilitiesRevision) &&
+    value.state.capabilitiesRevision === value.capabilitiesRevision,
+    'state capabilitiesRevision mismatch'
+  );
+  finiteNumber(value.state.observedAt, 'state.observedAt');
+
+  invariant(typeof value.health.reachable === 'boolean', 'health.reachable is required');
+  invariant(typeof value.health.authenticated === 'boolean', 'health.authenticated is required');
+  invariant(typeof value.health.transportConnected === 'boolean', 'health.transportConnected is required');
+  invariant(typeof value.health.retrying === 'boolean', 'health.retrying is required');
+  invariant(typeof value.health.degraded === 'boolean', 'health.degraded is required');
+  if (value.health.latencyMs !== undefined) {
+    finiteNumber(value.health.latencyMs, 'health.latencyMs');
+    invariant(value.health.latencyMs >= 0, 'health.latencyMs must be non-negative');
+  }
+  if (value.health.lastSuccessfulContact !== undefined) {
+    finiteNumber(value.health.lastSuccessfulContact, 'health.lastSuccessfulContact');
+  }
+  optionalString(value.health.reason, 'health.reason');
+  finiteNumber(value.health.observedAt, 'health.observedAt');
+
+  if (value.connector !== undefined) {
+    assertOnlyKeys(value.connector, ['id','family','connected','displayName','capabilities'], 'connector');
+    nonEmptyString(value.connector.id, 'connector.id');
+    invariant(CONNECTOR_FAMILIES.has(value.connector.family), 'connector.family must be normalized');
+    invariant(typeof value.connector.connected === 'boolean', 'connector.connected is required');
+    optionalString(value.connector.displayName, 'connector.displayName');
+    if (value.connector.capabilities !== undefined) {
+      invariant(Array.isArray(value.connector.capabilities), 'connector.capabilities must be an array');
+      for (const item of value.connector.capabilities) nonEmptyString(item, 'connector.capability');
+    }
+  }
+
+  for (const capability of value.capabilities) {
+    assertOnlyKeys(capability, ['id','supported','version','constraints'], 'capability');
+    invariant(CAPABILITY_IDS.has(capability.id), 'capability.id must be normalized');
+    invariant(typeof capability.supported === 'boolean', 'capability.supported is required');
+    optionalString(capability.version, 'capability.version');
+    optionalRecord(capability.constraints, 'capability.constraints');
+  }
+
+  for (const availability of value.availability) {
+    assertOnlyKeys(availability, ['capabilityId','available','reason','observedAt','capabilitiesRevision'], 'availability');
+    invariant(CAPABILITY_IDS.has(availability.capabilityId), 'availability.capabilityId must be normalized');
+    invariant(typeof availability.available === 'boolean', 'availability.available is required');
+    optionalString(availability.reason, 'availability.reason');
+    finiteNumber(availability.observedAt, 'availability.observedAt');
+    invariant(
+      Number.isInteger(availability.capabilitiesRevision) &&
+      availability.capabilitiesRevision === value.capabilitiesRevision,
+      'availability revision mismatch'
+    );
+  }
+
+  for (const storage of value.storages) {
+    assertOnlyKeys(storage, ['id','name','printerSide','removable','available','writable','capabilities'], 'storage');
+    nonEmptyString(storage.id, 'storage.id');
+    nonEmptyString(storage.name, 'storage.name');
+    invariant(typeof storage.printerSide === 'boolean', 'storage.printerSide is required');
+    invariant(typeof storage.removable === 'boolean', 'storage.removable is required');
+    invariant(typeof storage.available === 'boolean', 'storage.available is required');
+    invariant(typeof storage.writable === 'boolean', 'storage.writable is required');
+    invariant(Array.isArray(storage.capabilities), 'storage.capabilities must be an array');
+    for (const id of storage.capabilities) invariant(CAPABILITY_IDS.has(id), 'storage capability must be normalized');
+  }
+
+  for (const file of value.files) {
+    assertOnlyKeys(file, ['storageId','path','name','displayName','size','modifiedAt','metadata'], 'file');
+    nonEmptyString(file.storageId, 'file.storageId');
+    nonEmptyString(file.path, 'file.path');
+    nonEmptyString(file.name, 'file.name');
+    optionalString(file.displayName, 'file.displayName');
+    if (file.size !== undefined) {
+      finiteNumber(file.size, 'file.size');
+      invariant(file.size >= 0, 'file.size must be non-negative');
+    }
+    if (file.modifiedAt !== undefined) finiteNumber(file.modifiedAt, 'file.modifiedAt');
+    optionalRecord(file.metadata, 'file.metadata');
+  }
 
   const supported = new Set(value.capabilities.filter((c) => c.supported).map((c) => c.id));
   for (const availability of value.availability) {
     invariant(supported.has(availability.capabilityId), `availability declared for unsupported ${availability.capabilityId}`);
-    invariant(availability.capabilitiesRevision === value.capabilitiesRevision, 'availability revision mismatch');
   }
   for (const file of value.files) {
     invariant(value.storages.some((storage) => storage.id === file.storageId), `unknown storage ${file.storageId}`);

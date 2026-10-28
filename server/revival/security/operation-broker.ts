@@ -1,5 +1,8 @@
 export interface AuthorizationService {
-  authorize(operation: string, context: Record<string, unknown>): boolean;
+  authorize(
+    operation: string,
+    context: Record<string, unknown>
+  ): boolean | Promise<boolean>;
 }
 
 export interface TelemetrySink {
@@ -89,7 +92,13 @@ export class HostOperationBroker {
     }
 
     const authorizationContext = { ...context, privileged };
-    const allowed = this.authorization.authorize(operation, authorizationContext);
+    const allowed = await this.authorization.authorize(operation, authorizationContext);
+    if (typeof allowed !== 'boolean') {
+      throw new SecurityDeniedError(
+        'AUTHORIZATION_INVALID',
+        'Authorization service returned a non-boolean decision'
+      );
+    }
 
     try {
       this.telemetry?.event('security.authorization', {

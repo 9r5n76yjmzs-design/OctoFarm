@@ -1,11 +1,24 @@
+function encodedVariants(value: string): string[] {
+  const encoded = encodeURIComponent(value);
+  const lowerPercent = encoded.replace(/%[0-9A-F]{2}/g, (match) => match.toLowerCase());
+  const formEncoded = encoded.replace(/%20/g, '+');
+  const lowerFormEncoded = lowerPercent.replace(/%20/g, '+');
+
+  return [value, encoded, lowerPercent, formEncoded, lowerFormEncoded];
+}
+
 export class SensitiveValueGuard {
   private readonly values: string[];
 
   constructor(values: readonly string[]) {
     if (!Array.isArray(values)) throw new Error('Sensitive values are required');
+
     this.values = [...new Set(
-      values.filter((value) => typeof value === 'string' && value.length > 0)
-    )];
+      values
+        .filter((value) => typeof value === 'string' && value.length > 0)
+        .flatMap(encodedVariants)
+        .filter((value) => value.length > 0)
+    )].sort((left, right) => right.length - left.length);
   }
 
   redact(value: string): string {
