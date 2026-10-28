@@ -20,6 +20,7 @@ function response(body = {}, options = {}) {
     ok: (options.status ?? 200) >= 200 && (options.status ?? 200) < 300,
     redirectUrl: options.redirectUrl,
     bodyBytes: options.bodyBytes ?? Buffer.byteLength(text),
+    connectedAddress: options.connectedAddress ?? '192.0.2.10',
     async json() { return body; }
   };
 }
@@ -27,7 +28,9 @@ function response(body = {}, options = {}) {
 test('network mediation enforces destination, protocol, DNS/IP pinning, redirects, URL credentials, and response size', async () => {
   const dns = new Map([['printer.local', ['192.0.2.10']], ['other.local', ['198.51.100.4']]]);
   const resolver = { async resolve(hostname) { return dns.get(hostname) ?? []; } };
-  const executor = { async execute(url) {
+  const executionPolicies = [];
+  const executor = { async execute(url, _init, policy) {
+    executionPolicies.push(policy);
     if (url.endsWith('/redirect')) return response({}, { redirectUrl: 'https://blocked.example/next' });
     if (url.endsWith('/large')) return response({}, { bodyBytes: 1001 });
     return response({ ok: true });
@@ -36,10 +39,14 @@ test('network mediation enforces destination, protocol, DNS/IP pinning, redirect
     allowedOrigins: ['http://printer.local'],
     allowedAddressesByHost: { 'printer.local': ['192.0.2.10'] },
     maxRedirects: 1,
-    maxResponseBytes: 1000
+    maxResponseBytes: 1000,
+    maxTimeoutMs: 100
   }, executor, resolver);
 
   assert.equal((await client.request('http://printer.local/api')).ok, true);
+  assert.deepEqual(executionPolicies[0].approvedAddresses, ['192.0.2.10']);
+  assert.equal(executionPolicies[0].maxResponseBytes, 1000);
+  assert.equal(executionPolicies[0].redirectMode, 'manual');
   await assert.rejects(client.request('http://other.local/api'), /destination/);
   await assert.rejects(client.request('file:///not-allowed'), /protocol/);
   await assert.rejects(client.request('http://user:pass@printer.local/api'), /credentials/);
@@ -53,15 +60,49 @@ test('network mediation enforces destination, protocol, DNS/IP pinning, redirect
 test('network mediation fails closed when response size is not measured', async () => {
   const resolver = { async resolve() { return ['192.0.2.10']; } };
   const executor = { async execute() {
-    return { status: 200, ok: true, bodyBytes: Number.NaN, async json() { return {}; } };
+    return { status: 200, ok: true, bodyBytes: Number.NaN, connectedAddress: '192.0.2.10', async json() { return {}; } };
   }};
   const client = new HostNetworkClient({
     allowedOrigins: ['http://printer.local'],
     allowedAddressesByHost: { 'printer.local': ['192.0.2.10'] },
     maxRedirects: 0,
-    maxResponseBytes: 1000
+    maxResponseBytes: 1000,
+    maxTimeoutMs: 100
   }, executor, resolver);
   await assert.rejects(client.request('http://printer.local/api'), /measured response size/);
+});
+
+test('network mediation binds approved address to execution and rejects connection drift', async () => {
+  const resolver = { async resolve() { return ['192.0.2.10']; } };
+  const executor = { async execute(_url, _init, policy) {
+    assert.deepEqual(policy.approvedAddresses, ['192.0.2.10']);
+    return response({}, { connectedAddress: '127.0.0.1' });
+  }};
+  const client = new HostNetworkClient({
+    allowedOrigins: ['http://printer.local'],
+    allowedAddressesByHost: { 'printer.local': ['192.0.2.10'] },
+    maxRedirects: 0,
+    maxResponseBytes: 1000,
+    maxTimeoutMs: 100
+  }, executor, resolver);
+  await assert.rejects(client.request('http://printer.local/api'), /connected address/);
+});
+
+test('network mediation actively aborts a hung executor at the configured timeout', async () => {
+  const resolver = { async resolve() { return ['192.0.2.10']; } };
+  const executor = { async execute(_url, _init, policy) {
+    return await new Promise((_resolve, reject) => {
+      policy.signal.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+    });
+  }};
+  const client = new HostNetworkClient({
+    allowedOrigins: ['http://printer.local'],
+    allowedAddressesByHost: { 'printer.local': ['192.0.2.10'] },
+    maxRedirects: 0,
+    maxResponseBytes: 1000,
+    maxTimeoutMs: 10
+  }, executor, resolver);
+  await assert.rejects(client.request('http://printer.local/api'), /timeout/);
 });
 
 test('authorization denial occurs before provider invocation even when operation is supported', async () => {
@@ -121,6 +162,21 @@ test('safe diagnostic serialization allowlists fields and redacts known sensitiv
     'category','diagnosticCode','httpStatus','operation','printerId','providerInstanceId','retryable','userSafeMessage'
   ].sort());
   assert.equal(safe.userSafeMessage.includes('[REDACTED]'), true);
+
+  assert.throws(
+    () => serializeProviderDiagnostic({
+      category: { nested: { privateValue: marker } },
+      operation: 'snapshot'
+    }),
+    /category/
+  );
+  assert.throws(
+    () => serializeProviderDiagnostic({
+      category: 'PROVIDER_ERROR',
+      operation: { nested: marker }
+    }),
+    /operation/
+  );
 });
 
 test('logical path policy rejects traversal, deep encoding, NUL, alternate separators, and absolute paths', () => {
@@ -206,7 +262,7 @@ test('mandatory Security Gate runs every host-selected check despite provider by
   });
 
   assert.equal(report.bypassRequested, true);
-  assert.equal(report.passed, true);
+  assert.equal(report.passed, false);
   assert.deepEqual(ran, [...MANDATORY_SECURITY_CHECKS]);
 });
 
