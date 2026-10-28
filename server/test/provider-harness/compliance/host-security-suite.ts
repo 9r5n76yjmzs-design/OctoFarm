@@ -37,15 +37,25 @@ async function runHostSecurityGate() {
     'network-mediation': async () => {
       const resolver = { async resolve() { return ['192.0.2.10']; } };
       const executor = {
-        async execute() {
-          return { status: 200, ok: true, bodyBytes: 2, async json() { return {}; } };
+        async execute(_url, _init, policy) {
+          assert.deepEqual(policy.approvedAddresses, ['192.0.2.10']);
+          assert.equal(policy.maxResponseBytes, 100);
+          assert.equal(policy.redirectMode, 'manual');
+          return {
+            status: 200,
+            ok: true,
+            bodyBytes: 2,
+            connectedAddress: '192.0.2.10',
+            async json() { return {}; }
+          };
         }
       };
       const network = new HostNetworkClient({
         allowedOrigins: ['http://printer.local'],
         allowedAddressesByHost: { 'printer.local': ['192.0.2.10'] },
         maxRedirects: 0,
-        maxResponseBytes: 100
+        maxResponseBytes: 100,
+        maxTimeoutMs: 100
       }, executor, resolver);
 
       assert.equal((await network.request('http://printer.local/api')).ok, true);
