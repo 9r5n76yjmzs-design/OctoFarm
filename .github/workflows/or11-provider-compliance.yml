@@ -1,0 +1,27 @@
+name: OR-11 Provider Compliance
+
+on:
+  pull_request:
+  push:
+    branches:
+      - master
+
+permissions:
+  contents: read
+
+jobs:
+  provider-compliance:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Use Node.js 22.16.0 for OR-11 validation
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 22.16.0
+      - name: Run provider harness tests
+        shell: bash
+        run: |
+          node --experimental-strip-types --test $(find server/revival/test server/test/provider-harness -name '*.test.ts' -type f | sort)
+      - name: Run provider compliance entry point
+        run: node --experimental-strip-types server/test/provider-harness/run-compliance.ts --format both
