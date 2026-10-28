@@ -677,3 +677,40 @@ test('normalized provider snapshot rejects invalid values inside allowed fields'
     /health.observedAt must be finite/
   );
 });
+
+
+test('async authorization denial is awaited before provider invocation', async () => {
+  let providerCalls = 0;
+  const broker = new HostOperationBroker({
+    async authorize() {
+      return false;
+    }
+  });
+
+  await assert.rejects(
+    broker.invoke('PRINT', {}, () => {
+      providerCalls++;
+      return 'bad';
+    }),
+    (error) => error instanceof SecurityDeniedError && error.code === 'AUTHORIZATION_DENIED'
+  );
+  assert.equal(providerCalls, 0);
+});
+
+test('non-boolean authorization decisions fail closed', async () => {
+  let providerCalls = 0;
+  const broker = new HostOperationBroker({
+    authorize() {
+      return 'yes';
+    }
+  });
+
+  await assert.rejects(
+    broker.invoke('PRINT', {}, () => {
+      providerCalls++;
+      return 'bad';
+    }),
+    (error) => error instanceof SecurityDeniedError && error.code === 'AUTHORIZATION_INVALID'
+  );
+  assert.equal(providerCalls, 0);
+});
