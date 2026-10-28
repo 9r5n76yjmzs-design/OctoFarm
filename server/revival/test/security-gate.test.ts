@@ -622,3 +622,58 @@ test('sensitive-value guard redacts URI and form-encoded credential representati
     assert.equal(redacted, 'provider=[REDACTED]');
   }
 });
+
+
+test('normalized provider snapshot rejects invalid values inside allowed fields', () => {
+  const { assertProviderSnapshot } = require('../core/provider-contract.ts');
+  const base = {
+    identity: {
+      providerId: 'octoprint',
+      providerInstanceId: 'p1',
+      displayName: 'OctoPrint',
+      providerVersion: '2.0.0',
+      implementationVersion: 'revival'
+    },
+    capabilitiesRevision: 1,
+    capabilities: [],
+    availability: [],
+    state: {
+      printerId: 'printer1',
+      connection: 'CONNECTED',
+      operation: 'IDLE',
+      capabilitiesRevision: 1,
+      observedAt: 1
+    },
+    health: {
+      reachable: true,
+      authenticated: true,
+      transportConnected: true,
+      retrying: false,
+      degraded: false,
+      observedAt: 1
+    },
+    storages: [],
+    files: []
+  };
+
+  assert.throws(
+    () => assertProviderSnapshot({ ...base, state: { ...base.state, connection: 'NATIVE_SERIAL_OPEN' } }),
+    /state.connection must be normalized/
+  );
+  assert.throws(
+    () => assertProviderSnapshot({ ...base, state: { ...base.state, operation: 'OCTOPRINT_OPERATIONAL' } }),
+    /state.operation must be normalized/
+  );
+  assert.throws(
+    () => assertProviderSnapshot({ ...base, state: { ...base.state, observedAt: Number.NaN } }),
+    /state.observedAt must be finite/
+  );
+  assert.throws(
+    () => assertProviderSnapshot({ ...base, health: { ...base.health, authenticated: 'yes' } }),
+    /health.authenticated is required/
+  );
+  assert.throws(
+    () => assertProviderSnapshot({ ...base, health: { ...base.health, observedAt: Number.POSITIVE_INFINITY } }),
+    /health.observedAt must be finite/
+  );
+});
