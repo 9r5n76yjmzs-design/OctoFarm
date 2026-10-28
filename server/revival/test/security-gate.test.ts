@@ -24,7 +24,9 @@ function response(body = {}, options = {}) {
   };
 }
 
-test('network mediation blocks forbidden destination, protocol, URL credentials, redirect escape, and oversized response', async () => {
+test('network mediation enforces destination, protocol, DNS/IP pinning, redirects, URL credentials, and response size', async () => {
+  const dns = new Map([['printer.local', ['192.0.2.10']], ['other.local', ['198.51.100.4']]]);
+  const resolver = { async resolve(hostname) { return dns.get(hostname) ?? []; } };
   const executor = { async execute(url) {
     if (url.endsWith('/redirect')) return response({}, { redirectUrl: 'https://blocked.example/next' });
     if (url.endsWith('/large')) return response({}, { bodyBytes: 1001 });
@@ -32,9 +34,10 @@ test('network mediation blocks forbidden destination, protocol, URL credentials,
   }};
   const client = new HostNetworkClient({
     allowedOrigins: ['http://printer.local'],
+    allowedAddressesByHost: { 'printer.local': ['192.0.2.10'] },
     maxRedirects: 1,
     maxResponseBytes: 1000
-  }, executor);
+  }, executor, resolver);
 
   assert.equal((await client.request('http://printer.local/api')).ok, true);
   await assert.rejects(client.request('http://other.local/api'), /destination/);
@@ -42,6 +45,23 @@ test('network mediation blocks forbidden destination, protocol, URL credentials,
   await assert.rejects(client.request('http://user:pass@printer.local/api'), /credentials/);
   await assert.rejects(client.request('http://printer.local/redirect'), /destination/);
   await assert.rejects(client.request('http://printer.local/large'), /payload/);
+
+  dns.set('printer.local', ['127.0.0.1']);
+  await assert.rejects(client.request('http://printer.local/rebind'), /resolved address/);
+});
+
+test('network mediation fails closed when response size is not measured', async () => {
+  const resolver = { async resolve() { return ['192.0.2.10']; } };
+  const executor = { async execute() {
+    return { status: 200, ok: true, bodyBytes: Number.NaN, async json() { return {}; } };
+  }};
+  const client = new HostNetworkClient({
+    allowedOrigins: ['http://printer.local'],
+    allowedAddressesByHost: { 'printer.local': ['192.0.2.10'] },
+    maxRedirects: 0,
+    maxResponseBytes: 1000
+  }, executor, resolver);
+  await assert.rejects(client.request('http://printer.local/api'), /measured response size/);
 });
 
 test('authorization denial occurs before provider invocation even when operation is supported', async () => {
@@ -49,7 +69,7 @@ test('authorization denial occurs before provider invocation even when operation
   const authorization = {
     authorize(operation) { order.push(`auth:${operation}`); return false; }
   };
-  const broker = new HostOperationBroker(authorization, ['HOST_SHUTDOWN']);
+  const broker = new HostOperationBroker(authorization);
   let invoked = 0;
   await assert.rejects(
     broker.invoke('PRINT', { capabilitySupported: true }, () => { invoked++; return 'bad'; }),
@@ -59,18 +79,24 @@ test('authorization denial occurs before provider invocation even when operation
   assert.deepEqual(order, ['auth:PRINT']);
 });
 
-test('privileged operation requires host brokerage after authorization', async () => {
-  const authorization = { authorize() { return true; } };
-  const broker = new HostOperationBroker(authorization, ['HOST_SHUTDOWN']);
+test('privileged classification is host-owned and cannot be demoted by the caller', async () => {
+  const decisions = [];
+  const authorization = {
+    authorize(operation, context) {
+      decisions.push({ operation, privileged: context.privileged });
+      return context.privileged !== true;
+    }
+  };
+  const broker = new HostOperationBroker(authorization);
   let calls = 0;
 
+  assert.equal(broker.isPrivileged('HOST_SHUTDOWN'), true);
   await assert.rejects(
-    broker.invoke('PROVIDER_SETTINGS', {}, () => { calls++; }, { privileged: true }),
-    (error) => error.code === 'PRIVILEGED_OPERATION_DENIED'
+    broker.invoke('HOST_SHUTDOWN', {}, () => { calls++; return 'bad'; }),
+    (error) => error.code === 'AUTHORIZATION_DENIED'
   );
   assert.equal(calls, 0);
-  assert.equal(await broker.invoke('HOST_SHUTDOWN', {}, () => { calls++; return 7; }, { privileged: true }), 7);
-  assert.equal(calls, 1);
+  assert.deepEqual(decisions, [{ operation: 'HOST_SHUTDOWN', privileged: true }]);
 });
 
 test('safe diagnostic serialization allowlists fields and redacts known sensitive values', () => {
@@ -97,13 +123,15 @@ test('safe diagnostic serialization allowlists fields and redacts known sensitiv
   assert.equal(safe.userSafeMessage.includes('[REDACTED]'), true);
 });
 
-test('logical path policy rejects plain, encoded, double-encoded, alternate-separator, and absolute traversal', () => {
+test('logical path policy rejects traversal, deep encoding, NUL, alternate separators, and absolute paths', () => {
   assert.equal(validateProviderLogicalPath('jobs/cube.gcode'), 'jobs/cube.gcode');
   for (const bad of [
     '../escape',
     '..\\escape',
     '%2e%2e/escape',
     '%252e%252e%252fescape',
+    '%252525252e%252525252e%252525252fescape',
+    'nul\0byte.gcode',
     '/absolute/path',
     'C:\\absolute\\path'
   ]) {
@@ -140,28 +168,30 @@ test('telemetry is optional and structured without altering functional result', 
 
   const record = recording.all()[0];
   assert.equal(record.name, 'security.authorization');
-  for (const key of ['service','component','domain','operation','allowed']) {
+  for (const key of ['service','component','domain','operation','privileged','allowed']) {
     assert.ok(Object.prototype.hasOwnProperty.call(record.attributes, key));
   }
 });
 
-test('browser projection excludes endpoint and private provider configuration', () => {
+test('browser projection drops arbitrary provider metadata, constraints, and diagnostic reason strings', () => {
+  const marker = 'PRIVATE-BROWSER-MARKER';
   const snapshot = {
     identity: { providerId:'octoprint', providerInstanceId:'p1', displayName:'OctoPrint', providerVersion:'2.0.0', implementationVersion:'revival' },
     capabilitiesRevision:1,
-    capabilities:[],
-    availability:[],
+    capabilities:[{ id:'PRINT', supported:true, constraints:{ privateValue:marker } }],
+    availability:[{ capabilityId:'PRINT', available:true, reason:marker, observedAt:1, capabilitiesRevision:1 }],
     state:{ printerId:'printer1', connection:'CONNECTED', operation:'IDLE', capabilitiesRevision:1, observedAt:1 },
-    health:{ reachable:true, authenticated:true, transportConnected:true, retrying:false, degraded:false, observedAt:1 },
+    health:{ reachable:true, authenticated:true, transportConnected:true, retrying:false, degraded:false, reason:marker, observedAt:1 },
+    connector:{ id:'serial0', family:'SERIAL', connected:true, displayName:marker, capabilities:[marker] },
     storages:[],
-    files:[],
+    files:[{ storageId:'local', path:'cube.gcode', name:'cube.gcode', metadata:{ privateValue:marker } }],
     endpoint:'http://printer.local',
-    privateValue:'do-not-project'
+    privateValue:marker
   };
   const projected = projectProviderForBrowser(snapshot);
   const serialized = JSON.stringify(projected);
   assert.equal(serialized.includes('printer.local'), false);
-  assert.equal(serialized.includes('do-not-project'), false);
+  assert.equal(serialized.includes(marker), false);
 });
 
 test('mandatory Security Gate runs every host-selected check despite provider bypass request', async () => {

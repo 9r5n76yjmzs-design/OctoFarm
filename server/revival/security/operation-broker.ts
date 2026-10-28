@@ -15,6 +15,8 @@ export class SecurityDeniedError extends Error {
   }
 }
 
+const DEFAULT_PRIVILEGED_OPERATIONS = ['HOST_RESTART', 'HOST_SHUTDOWN'];
+
 export class HostOperationBroker {
   private readonly authorization: AuthorizationService;
   private readonly privilegedOperations: Set<string>;
@@ -22,33 +24,40 @@ export class HostOperationBroker {
 
   constructor(
     authorization: AuthorizationService,
-    privilegedOperations: string[] = [],
+    additionalPrivilegedOperations: string[] = [],
     telemetry?: TelemetrySink
   ) {
     this.authorization = authorization;
-    this.privilegedOperations = new Set(privilegedOperations);
+    this.privilegedOperations = new Set([
+      ...DEFAULT_PRIVILEGED_OPERATIONS,
+      ...additionalPrivilegedOperations
+    ]);
     this.telemetry = telemetry;
   }
 
   async invoke<T>(
     operation: string,
     context: Record<string, unknown>,
-    providerCall: () => Promise<T> | T,
-    options: { privileged?: boolean } = {}
+    providerCall: () => Promise<T> | T
   ): Promise<T> {
-    const allowed = this.authorization.authorize(operation, context);
+    const privileged = this.privilegedOperations.has(operation);
+    const authorizationContext = { ...context, privileged };
+    const allowed = this.authorization.authorize(operation, authorizationContext);
+
     this.telemetry?.event('security.authorization', {
       service: 'octofarm-revival',
       component: 'host-security',
       domain: 'provider-operation',
       operation,
+      privileged,
       allowed
     });
 
     if (!allowed) throw new SecurityDeniedError('AUTHORIZATION_DENIED', 'Operation denied by host authorization');
-    if (options.privileged && !this.privilegedOperations.has(operation)) {
-      throw new SecurityDeniedError('PRIVILEGED_OPERATION_DENIED', 'Privileged operation is not host-brokered');
-    }
     return providerCall();
+  }
+
+  isPrivileged(operation: string): boolean {
+    return this.privilegedOperations.has(operation);
   }
 }

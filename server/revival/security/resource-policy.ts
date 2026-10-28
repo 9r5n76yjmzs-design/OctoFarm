@@ -5,12 +5,21 @@ export interface ResourceLimits {
   maxTimeoutMs: number;
 }
 
+function nonNegativeInteger(value: number, name: string): void {
+  if (!Number.isInteger(value) || value < 0) throw new Error(`${name} must be a non-negative integer`);
+}
+
 export class ResourcePolicy {
   private readonly limits: ResourceLimits;
   private active = 0;
 
   constructor(limits: ResourceLimits) {
-    this.limits = limits;
+    nonNegativeInteger(limits.maxConcurrent, 'maxConcurrent');
+    nonNegativeInteger(limits.maxPayloadBytes, 'maxPayloadBytes');
+    nonNegativeInteger(limits.maxRetries, 'maxRetries');
+    nonNegativeInteger(limits.maxTimeoutMs, 'maxTimeoutMs');
+    if (limits.maxConcurrent < 1) throw new Error('maxConcurrent must be at least 1');
+    this.limits = { ...limits };
   }
 
   assertPayload(bytes: number): void {
