@@ -1,0 +1,1 @@
+{"schemaVersion":1,"id":"ADV-EVENT-003","purpose":"contract","description":"Duplicate normalized event replay remains idempotent.","requirements":["OR11-REQ-015","OR11-REQ-016"],"source":{"kind":"engineering","reference":"OR-11 / OR11-I05"},"tags":["events","replay","idempotency"],"input":{"eventId":"same","deliveries":2},"expected":{"acceptedSideEffects":1}}
