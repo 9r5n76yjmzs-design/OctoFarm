@@ -125,8 +125,32 @@ function invariant(condition: unknown, message: string): asserts condition {
 
 export function normalizeLogicalPath(value: string): string {
   invariant(typeof value === 'string' && value.length > 0, 'file path must be non-empty');
-  invariant(!value.startsWith('/') && !/^[A-Za-z]:[\\/]/.test(value), 'file path must be logical and relative');
-  const portable = value.replace(/\\/g, '/');
+
+  let decoded = value;
+  let stable = false;
+  for (let i = 0; i < 8; i++) {
+    let next: string;
+    try {
+      next = decodeURIComponent(decoded);
+    } catch {
+      invariant(false, 'file path contains invalid encoding');
+    }
+    if (next === decoded) {
+      stable = true;
+      break;
+    }
+    decoded = next;
+  }
+
+  invariant(stable, 'file path encoding exceeds normalization limit');
+  invariant(!decoded.includes(String.fromCharCode(0)), 'file path must not contain NUL');
+
+  const portable = decoded.replace(/\\/g, '/');
+  invariant(
+    !portable.startsWith('/') && !/^[A-Za-z]:\//.test(portable),
+    'file path must be logical and relative'
+  );
+
   const parts = portable.split('/').filter((part) => part !== '' && part !== '.');
   invariant(!parts.includes('..'), 'file path must not contain traversal');
   return parts.join('/');

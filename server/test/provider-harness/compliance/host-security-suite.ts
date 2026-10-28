@@ -7,6 +7,7 @@ const { serializeProviderDiagnostic } = require('../../../revival/security/diagn
 const { validateProviderLogicalPath } = require('../../../revival/security/path-policy.ts');
 const { ResourcePolicy } = require('../../../revival/security/resource-policy.ts');
 const { projectProviderForBrowser } = require('../../../revival/security/browser-projection.ts');
+const { normalizeLogicalPath } = require('../../../revival/core/provider-contract.ts');
 
 function expectThrow(callback: () => unknown): void {
   let threw = false;
@@ -37,19 +38,91 @@ async function runHostSecurityGate() {
     'network-mediation': async () => {
       const resolver = { async resolve() { return ['192.0.2.10']; } };
       const executor = {
-        async execute() {
-          return { status: 200, ok: true, bodyBytes: 2, async json() { return {}; } };
+        async execute(_url, _init, policy) {
+          assert.deepEqual(policy.approvedAddresses, ['192.0.2.10']);
+          assert.equal(policy.maxResponseBytes, 100);
+          assert.equal(policy.redirectMode, 'manual');
+          return {
+            status: 200,
+            ok: true,
+            bodyBytes: 2,
+            connectedAddress: '192.0.2.10',
+            async json() { return {}; }
+          };
         }
       };
       const network = new HostNetworkClient({
         allowedOrigins: ['http://printer.local'],
         allowedAddressesByHost: { 'printer.local': ['192.0.2.10'] },
         maxRedirects: 0,
-        maxResponseBytes: 100
+        maxResponseBytes: 100,
+        maxTimeoutMs: 100
       }, executor, resolver);
 
       assert.equal((await network.request('http://printer.local/api')).ok, true);
       await assert.rejects(network.request('http://blocked.local/api'));
+
+      const crossOriginResolver = {
+        async resolve(hostname: string) {
+          if (hostname === 'a.local') return ['192.0.2.10'];
+          if (hostname === 'b.local') return ['192.0.2.20'];
+          return [];
+        }
+      };
+      const crossOriginExecutor = {
+        async execute(url: string) {
+          if (url === 'http://a.local/start') {
+            return {
+              status: 302,
+              ok: false,
+              redirectUrl: 'http://b.local/next',
+              bodyBytes: 0,
+              connectedAddress: '192.0.2.10',
+              async json() { return {}; }
+            };
+          }
+          return {
+            status: 200,
+            ok: true,
+            bodyBytes: 2,
+            connectedAddress: '192.0.2.20',
+            async json() { return {}; }
+          };
+        }
+      };
+      const crossOrigin = new HostNetworkClient({
+        allowedOrigins: ['http://a.local', 'http://b.local'],
+        allowedAddressesByHost: {
+          'a.local': ['192.0.2.10'],
+          'b.local': ['192.0.2.20']
+        },
+        maxRedirects: 1,
+        maxResponseBytes: 100,
+        maxTimeoutMs: 100
+      }, crossOriginExecutor, crossOriginResolver);
+      await assert.rejects(
+        crossOrigin.request('http://a.local/start', {
+          headers: { Authorization: 'synthetic-provider-credential' }
+        }),
+        /cross-origin redirect/
+      );
+
+      const hungExecutor = {
+        async execute() {
+          return new Promise(() => {});
+        }
+      };
+      const bounded = new HostNetworkClient({
+        allowedOrigins: ['http://printer.local'],
+        allowedAddressesByHost: { 'printer.local': ['192.0.2.10'] },
+        maxRedirects: 0,
+        maxResponseBytes: 100,
+        maxTimeoutMs: 10
+      }, hungExecutor, resolver);
+      await assert.rejects(
+        bounded.request('http://printer.local/hang'),
+        /timeout/
+      );
     },
 
     'authorization-ordering': async () => {
@@ -69,8 +142,20 @@ async function runHostSecurityGate() {
         }
       });
       assert.equal(broker.isPrivileged('HOST_SHUTDOWN'), true);
+      assert.equal(broker.isPrivileged('PROVIDER_SETTINGS'), true);
       await assert.rejects(
         broker.invoke('HOST_SHUTDOWN', {}, () => { invoked++; })
+      );
+      assert.equal(invoked, 0);
+
+      const permissive = new HostOperationBroker({
+        authorize() { return true; }
+      });
+      await assert.rejects(
+        permissive.invoke('FIRMWARE_FLASH', {}, () => { invoked++; }),
+        (error: unknown) =>
+          error instanceof Error &&
+          (error as Error & { code?: string }).code === 'UNKNOWN_OPERATION'
       );
       assert.equal(invoked, 0);
     },
@@ -93,6 +178,8 @@ async function runHostSecurityGate() {
       assert.equal(validateProviderLogicalPath('jobs/cube.gcode'), 'jobs/cube.gcode');
       expectThrow(() => validateProviderLogicalPath('../escape'));
       expectThrow(() => validateProviderLogicalPath('nul' + String.fromCharCode(0) + 'file'));
+      expectThrow(() => normalizeLogicalPath('%2e%2e/escape.gcode'));
+      expectThrow(() => normalizeLogicalPath('%252e%252e%252fescape.gcode'));
     },
 
     'resource-ceilings': () => {
