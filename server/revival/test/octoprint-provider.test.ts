@@ -10,6 +10,11 @@ class TestFetchTransport {
   async request(url, init = {}) { return fetch(url, init); }
 }
 
+class StaticCredentialAccessor {
+  current() { return { revision: 1, value: 'synthetic-test-credential' }; }
+  refresh() { throw new Error('no newer credential'); }
+}
+
 function fixturePath(group: string, name: string): string {
   return path.join(__dirname, '..', '..', 'test', 'provider-harness', 'fixtures', 'octoprint', group, name);
 }
@@ -19,7 +24,7 @@ async function snapshot(group: string, name: string) {
   const synthetic = new SyntheticOctoPrint(scenario);
   await synthetic.start();
   try {
-    const provider = new OctoPrintProvider(synthetic.endpoint(), 'provider-1', 'printer-1', new TestFetchTransport(), () => 1000);
+    const provider = new OctoPrintProvider(synthetic.endpoint(), 'provider-1', 'printer-1', new TestFetchTransport(), new StaticCredentialAccessor(), () => 1000);
     return { value: await provider.snapshot(), requests: synthetic.capturedRequests() };
   } finally {
     await synthetic.stop();
@@ -83,11 +88,11 @@ test('authentication and authorization failures remain distinct provider errors'
     async request() { return { status: this.status, ok: false, async json(){ return {}; } }; }
   }
   await assert.rejects(
-    new OctoPrintProvider('http://local', 'p1', 'printer-1', new Transport(401)).snapshot(),
+    new OctoPrintProvider('http://local', 'p1', 'printer-1', new Transport(401), new StaticCredentialAccessor()).snapshot(),
     (error:any) => error instanceof OctoPrintProviderError && error.category === 'AUTHENTICATION'
   );
   await assert.rejects(
-    new OctoPrintProvider('http://local', 'p1', 'printer-1', new Transport(403)).snapshot(),
+    new OctoPrintProvider('http://local', 'p1', 'printer-1', new Transport(403), new StaticCredentialAccessor()).snapshot(),
     (error:any) => error instanceof OctoPrintProviderError && error.category === 'AUTHORIZATION'
   );
 });
@@ -120,7 +125,14 @@ test('normalized boundary contains no OctoPrint-native top-level structures', as
 
 test('provider requires host-supplied transport', () => {
   assert.throws(
-    () => new OctoPrintProvider('http://local', 'p1', 'printer-1', undefined),
+    () => new OctoPrintProvider('http://local', 'p1', 'printer-1', undefined, new StaticCredentialAccessor()),
     /Host-mediated HttpTransport is required/
+  );
+});
+
+test('provider requires host credential accessor', () => {
+  assert.throws(
+    () => new OctoPrintProvider('http://local', 'p1', 'printer-1', new TestFetchTransport(), undefined),
+    /Host credential accessor is required/
   );
 });
