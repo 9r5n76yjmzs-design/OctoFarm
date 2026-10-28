@@ -10,7 +10,7 @@ test('minimal non-OctoPrint PRINT-only provider passes core, mandatory security,
   const provider = new MinimalPrintProvider();
   const report = await runProviderCompliance(() => provider);
 
-  assert.equal(report.passed, true);
+  assert.equal(report.passed, true, JSON.stringify(report, null, 2));
   assert.equal(report.providerIdentity.providerId, 'minimal-print');
   assert.equal(report.harnessVersion, 'or11-i07-v1');
   assert.deepEqual(report.capabilityPacks.map((pack) => pack.declaredCapabilities), [['PRINT']]);
@@ -29,7 +29,7 @@ test('capability selection is granular and does not infer PAUSE/RESUME/CANCEL/RE
 
 test('official runner owns mandatory Security Gate selection and ignores provider bypass hints', async () => {
   const report = await runProviderCompliance(() => new MinimalPrintProvider());
-  assert.equal(report.security.passed, true);
+  assert.equal(report.security.passed, true, JSON.stringify(report.security, null, 2));
   assert.deepEqual(
     report.security.tests.map((result) => result.name),
     [...MANDATORY_SECURITY_CHECKS]
