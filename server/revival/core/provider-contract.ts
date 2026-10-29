@@ -26,12 +26,19 @@ export type CapabilityId =
  * Identifies provider implementation, running instance, protocol and versions separately.
  */
 export interface ProviderIdentity {
+  /** Stable provider implementation kind; shared by instances of that adapter. */
   providerId: string;
+  /** Unique running provider instance, distinct from provider kind and printer ID. */
   providerInstanceId: string;
+  /** Display label for a provider implementation. */
   displayName: string;
+  /** Version reported by the underlying provider service. */
   providerVersion: string;
+  /** Version identifier of this Revival adapter implementation. */
   implementationVersion: string;
+  /** Optional normalized protocol family. */
   protocolFamily?: string;
+  /** Optional negotiated native protocol version. */
   protocolVersion?: string;
 }
 
@@ -39,9 +46,13 @@ export interface ProviderIdentity {
  * Declares supported behavior; availability is represented separately.
  */
 export interface Capability {
+  /** Provider-neutral operation being declared. */
   id: CapabilityId;
+  /** Whether the adapter implements the operation; distinct from current availability. */
   supported: boolean;
+  /** Optional version of this capability contract. */
   version?: string;
+  /** Optional normalized capability limits; do not pass native objects through. */
   constraints?: Record<string, unknown>;
 }
 
@@ -49,10 +60,15 @@ export interface Capability {
  * Describes current ability to invoke a supported capability at a particular observation/revision.
  */
 export interface OperationAvailability {
+  /** Operation for which this observation applies. */
   capabilityId: CapabilityId;
+  /** Whether the supported operation is currently invokable. */
   available: boolean;
+  /** Optional normalized explanation when unavailable. */
   reason?: string;
+  /** Timestamp associated with the availability observation. */
   observedAt: number;
+  /** Capability revision against which this availability was computed. */
   capabilitiesRevision: number;
 }
 
@@ -85,10 +101,15 @@ export type OperationalState =
  * Authoritative normalized operational observation, including revision and timestamp.
  */
 export interface PrinterState {
+  /** Stable printer identity used for domain state reconciliation. */
   printerId: string;
+  /** Normalized printer connection state, not a health substitute. */
   connection: ConnectionState;
+  /** Current normalized printer operation. */
   operation: OperationalState;
+  /** Revision applicable to this observation. */
   capabilitiesRevision: number;
+  /** Observation time used to reject stale state. */
   observedAt: number;
 }
 
@@ -96,14 +117,23 @@ export interface PrinterState {
  * Provider reachability/authentication and transport health, distinct from printer state.
  */
 export interface ProviderHealth {
+  /** Whether the provider endpoint was reachable on the last observation. */
   reachable: boolean;
+  /** Whether authentication succeeded on the last observation. */
   authenticated: boolean;
+  /** Whether the provider transport is connected. */
   transportConnected: boolean;
+  /** Optional observed latency in milliseconds. */
   latencyMs?: number;
+  /** Optional timestamp of last successful contact. */
   lastSuccessfulContact?: number;
+  /** Whether a provider retry is in progress. */
   retrying: boolean;
+  /** Whether provider health is degraded. */
   degraded: boolean;
+  /** Optional normalized diagnostic reason, not a raw provider exception. */
   reason?: string;
+  /** Timestamp of this health observation. */
   observedAt: number;
 }
 
@@ -111,10 +141,15 @@ export interface ProviderHealth {
  * Provider-neutral connection reference, not a native port/connector object.
  */
 export interface ConnectorRef {
+  /** Stable logical connector identifier. */
   id: string;
+  /** Normalized connector transport family. */
   family: 'SERIAL' | 'NETWORK' | 'OTHER' | 'UNKNOWN';
+  /** Whether the connector is currently connected. */
   connected: boolean;
+  /** Optional safe human-readable connector label. */
   displayName?: string;
+  /** Optional normalized connector capability labels. */
   capabilities?: string[];
 }
 
@@ -122,12 +157,19 @@ export interface ConnectorRef {
  * Provider-neutral storage capabilities and writeability classification.
  */
 export interface StorageRef {
+  /** Logical storage identity, scoped to the provider. */
   id: string;
+  /** Human-readable storage label. */
   name: string;
+  /** Whether storage is on the printer rather than host. */
   printerSide: boolean;
+  /** Whether the storage medium is removable. */
   removable: boolean;
+  /** Whether storage is presently accessible. */
   available: boolean;
+  /** Whether writes are supported and allowed by storage state. */
   writable: boolean;
+  /** Supported storage-related operations for this reference. */
   capabilities: CapabilityId[];
 }
 
@@ -135,12 +177,19 @@ export interface StorageRef {
  * Provider-logical file identity; path MUST NOT be combined with local filesystem roots.
  */
 export interface FileRef {
+  /** Logical storage owning this file. */
   storageId: string;
+  /** Safe provider-logical relative path, not a host filesystem path. */
   path: string;
+  /** Base filename of the logical object. */
   name: string;
+  /** Optional user-facing filename. */
   displayName?: string;
+  /** Optional file size as reported by the provider, in bytes. */
   size?: number;
+  /** Optional provider-reported modification timestamp. */
   modifiedAt?: number;
+  /** Optional bounded, normalized metadata; never raw secret-bearing native fields. */
   metadata?: Record<string, unknown>;
 }
 
@@ -148,14 +197,23 @@ export interface FileRef {
  * Single normalized boundary object validated before entering Revival core.
  */
 export interface ProviderSnapshot {
+  /** Provider and running-instance identity. */
   identity: ProviderIdentity;
+  /** Authoritative capability generation used by snapshot and availability. */
   capabilitiesRevision: number;
+  /** Operations supported by the provider. */
   capabilities: Capability[];
+  /** Runtime availability for supported operations. */
   availability: OperationAvailability[];
+  /** Normalized printer connection and operation observation. */
   state: PrinterState;
+  /** Independent provider transport/authentication health observation. */
   health: ProviderHealth;
+  /** Optional currently described connector. */
   connector?: ConnectorRef;
+  /** Normalized available storage references. */
   storages: StorageRef[];
+  /** Normalized provider-logical file references. */
   files: FileRef[];
 }
 

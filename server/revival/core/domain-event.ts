@@ -16,16 +16,27 @@ export type DomainEventType =
  * Versioned, identity-scoped event contract delivered to the domain ingress.
  */
 export interface DomainEvent<T = unknown> {
+  /** Normalized event schema version; currently exactly 1. */
   schemaVersion: 1;
+  /** Bounded event identity; replay suppression also scopes it by provider instance. */
   eventId: string;
+  /** Normalized event class selecting the type-specific payload schema. */
   type: DomainEventType;
+  /** Authoritative printer identity; state payload identity must match. */
   printerId: string;
+  /** Provider implementation kind. */
   providerId: string;
+  /** Instance identity, used to isolate streams and replay keys. */
   providerInstanceId: string;
+  /** Source event occurrence timestamp. */
   occurredAt: number;
+  /** Time the host observed the event, used in reconciliation. */
   observedAt: number;
+  /** Optional bounded correlation identity. */
   correlationId?: string;
+  /** Optional bounded triggering-event identity. */
   causationId?: string;
+  /** Type-specific, runtime-validated normalized data without native extras. */
   payload: T;
 }
 
