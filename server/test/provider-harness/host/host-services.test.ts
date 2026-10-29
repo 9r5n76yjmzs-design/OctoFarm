@@ -1,3 +1,7 @@
+/**
+ * Deterministic fake host service tests for clock, scheduling, authorization, network, storage and telemetry.
+ * @module
+ */
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const { FakeClock } = require('./fake-clock.ts');

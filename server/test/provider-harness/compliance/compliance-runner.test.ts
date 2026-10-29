@@ -1,3 +1,7 @@
+/**
+ * Official compliance-runner regression tests: host-owned mandatory gate, reference neutrality and capability-pack selection.
+ * @module
+ */
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
