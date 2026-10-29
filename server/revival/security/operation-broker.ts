@@ -1,16 +1,47 @@
+/**
+ * Host-owned authorization runs before provider invocation; caller-supplied privilege flags are ignored.
+ * @module
+ */
+/**
+ * Authorizer may be synchronous or asynchronous; only boolean decisions are accepted.
+ */
 export interface AuthorizationService {
+  /**
+   * Determine whether the host permits the named provider operation.
+   * @param operation - Host-recognized operation name.
+   * @param context - Host-computed context including privileged classification.
+   * @returns Boolean decision, possibly asynchronous; nonboolean results are rejected by the broker.
+   * @throws Error when authorization service fails.
+   */
   authorize(
     operation: string,
     context: Record<string, unknown>
   ): boolean | Promise<boolean>;
 }
 
+/**
+ * Optional audit sink; telemetry errors never override authorization.
+ */
 export interface TelemetrySink {
+  /**
+   * Record an observational event without influencing authorization.
+   * @param name - Event identifier.
+   * @param attributes - Optional safe structured event dimensions.
+   * @returns Nothing.
+   */
   event(name: string, attributes?: Record<string, unknown>): void;
 }
 
+/**
+ * Host denial containing a stable rejection code.
+ */
 export class SecurityDeniedError extends Error {
   readonly code: string;
+  /**
+   * Creates a safe categorized security denial.
+   * @param code - Denial code.
+   * @param message - Safe explanation.
+   */
   constructor(code: string, message: string) {
     super(message);
     this.name = 'SecurityDeniedError';
@@ -42,12 +73,22 @@ const DEFAULT_PRIVILEGED_OPERATIONS = [
   'PROVIDER_SETTINGS'
 ];
 
+/**
+ * Registers host-owned standard and privileged operations and rejects unknown operations.
+ */
 export class HostOperationBroker {
   private readonly authorization: AuthorizationService;
   private readonly standardOperations: Set<string>;
   private readonly privilegedOperations: Set<string>;
   private readonly telemetry?: TelemetrySink;
 
+  /**
+   * Configures host authorizer, known operations, optional audit sink.
+   * @param authorization - Host decision authority.
+   * @param additionalPrivilegedOperations - Host-declared privileged operations.
+   * @param telemetry - Optional observational sink.
+   * @param additionalStandardOperations - Extra registered operations.
+   */
   constructor(
     authorization: AuthorizationService,
     additionalPrivilegedOperations: string[] = [],
@@ -66,6 +107,14 @@ export class HostOperationBroker {
     this.telemetry = telemetry;
   }
 
+  /**
+   * Awaits authorization before calling provider; unknown, denied and non-boolean decisions fail closed.
+   * @param operation - Host-registered operation name.
+   * @param context - Caller context; privileged classification is overwritten.
+   * @param providerCall - Deferred provider operation.
+   * @returns Provider result only after authorization.
+   * @throws SecurityDeniedError on unknown operation or invalid/denied authorization.
+   */
   async invoke<T>(
     operation: string,
     context: Record<string, unknown>,
@@ -120,10 +169,20 @@ export class HostOperationBroker {
     return providerCall();
   }
 
+  /**
+   * Checks host-owned privilege classification.
+   * @param operation - Operation name.
+   * @returns Whether privileged.
+   */
   isPrivileged(operation: string): boolean {
     return this.privilegedOperations.has(operation);
   }
 
+  /**
+   * Checks explicit host operation registration.
+   * @param operation - Operation name.
+   * @returns Whether registered.
+   */
   isKnown(operation: string): boolean {
     return this.privilegedOperations.has(operation) || this.standardOperations.has(operation);
   }

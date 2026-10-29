@@ -1,21 +1,50 @@
+/**
+ * Canary-based secret leak detection across nested test output structures.
+ * @module
+ */
+/**
+ * Finds synthetic secret values in structured diagnostics, state, telemetry and reports.
+ */
 class SecretLeakDetector {
   private secrets = new Set<string>();
 
+  /**
+   * Adds a synthetic secret to the scan set.
+   * @param secret - Canary value.
+   * @returns Nothing.
+   */
   seed(secret: string): void {
     if (!secret) throw new Error('secret must be non-empty');
     this.secrets.add(secret);
   }
 
+  /**
+   * Scans nested output for registered values.
+   * @param value - Candidate output.
+   * @returns Detected leak markers.
+   */
   scan(value: unknown): string[] {
     const text = this.flatten(value);
     return [...this.secrets].filter((secret) => text.includes(secret));
   }
 
+  /**
+   * Fails if seeded secrets appear anywhere in output.
+   * @param value - Candidate output.
+   * @returns Nothing.
+   * @throws Error when a leak is detected.
+   */
   assertClean(value: unknown): void {
     const leaked = this.scan(value);
     if (leaked.length) throw new Error(`Synthetic secret leak detected: ${leaked.join(', ')}`);
   }
 
+  /**
+   * Flattens nested objects with cycle protection.
+   * @param value - Input data.
+   * @param seen - Already visited objects.
+   * @returns Searchable string.
+   */
   private flatten(value: unknown, seen = new Set<object>()): string {
     if (value === null || value === undefined) return String(value);
     if (typeof value === 'string') return value;

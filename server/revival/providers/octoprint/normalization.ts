@@ -1,3 +1,7 @@
+/**
+ * Version, connector, state, capability and file normalization stays inside the OctoPrint provider boundary.
+ * @module
+ */
 import { normalizeLogicalPath } from '../../core/provider-contract.ts';
 import type {
   Capability,
@@ -10,14 +14,26 @@ import type {
   StorageRef
 } from '../../core/provider-contract.ts';
 
+/**
+ * Negotiated API operating mode.
+ */
 export type OctoPrintApiMode = 'LEGACY_1_X' | 'V2_COMPAT' | 'V2_NATIVE';
 
+/**
+ * Normalized version discovery result.
+ */
 export interface NegotiatedOctoPrintIdentity {
   mode: OctoPrintApiMode;
   serverVersion: string;
   protocolVersion: string;
 }
 
+/**
+ * Selects legacy, v2 compatibility or v2 native API semantics.
+ * @param initial - Initial version response.
+ * @param nativeProbe - Optional v2 negotiation response.
+ * @returns Negotiated mode and versions.
+ */
 export function negotiateIdentity(
   initial: Record<string, unknown>,
   nativeProbe?: Record<string, unknown>
@@ -35,6 +51,11 @@ export function negotiateIdentity(
   return { mode: 'V2_COMPAT', serverVersion, protocolVersion: String(nativeProbe?.api ?? initial.api ?? 'compat') };
 }
 
+/**
+ * Maps native connector kinds to standard families.
+ * @param type - Native type label.
+ * @returns Normalized connector family.
+ */
 function connectorFamily(type: unknown): ConnectorRef['family'] {
   const normalized = String(type ?? '').toLowerCase();
   if (normalized.includes('serial')) return 'SERIAL';
@@ -43,6 +64,11 @@ function connectorFamily(type: unknown): ConnectorRef['family'] {
   return 'UNKNOWN';
 }
 
+/**
+ * Builds a connector reference for native or legacy serial connections.
+ * @param connection - Native connection response.
+ * @returns Connector reference or undefined.
+ */
 export function normalizeConnector(connection: Record<string, unknown>): ConnectorRef | undefined {
   const current = connection.current as Record<string, unknown> | undefined;
   if (!current) return undefined;
@@ -71,6 +97,11 @@ export function normalizeConnector(connection: Record<string, unknown>): Connect
   return undefined;
 }
 
+/**
+ * Converts a native state label to a domain operation enum.
+ * @param state - Native state text.
+ * @returns Normalized operation or UNKNOWN.
+ */
 function mapOperation(state: string): OperationalState {
   const normalized = state.toLowerCase();
   if (normalized.includes('print')) return 'PRINTING';
@@ -82,6 +113,14 @@ function mapOperation(state: string): OperationalState {
   return 'UNKNOWN';
 }
 
+/**
+ * Builds an operation and connection observation.
+ * @param printerId - Stable printer ID.
+ * @param connection - Native response.
+ * @param capabilitiesRevision - Capability generation.
+ * @param observedAt - Observation timestamp.
+ * @returns Normalized printer state.
+ */
 export function normalizeState(
   printerId: string,
   connection: Record<string, unknown>,
@@ -101,11 +140,23 @@ export function normalizeState(
   };
 }
 
+/**
+ * Lists the adapter's supported baseline capabilities.
+ * @returns Capability declarations.
+ */
 export function baselineCapabilities(): Capability[] {
   const ids: CapabilityId[] = ['PRINT', 'FILE_LIST', 'STORAGE_LIST'];
   return ids.map((id) => ({ id, supported: true }));
 }
 
+/**
+ * Calculates current availability without modifying support.
+ * @param capabilities - Capability declarations.
+ * @param state - Normalized state.
+ * @param capabilitiesRevision - Capability generation.
+ * @param observedAt - Observation timestamp.
+ * @returns Availability records.
+ */
 export function availabilityFor(
   capabilities: Capability[],
   state: PrinterState,
@@ -135,6 +186,12 @@ export function availabilityFor(
     });
 }
 
+/**
+ * Converts native file listings to safe provider-logical references.
+ * @param payload - Native file/storage response.
+ * @returns Storage and FileRef arrays.
+ * @throws Error for invalid logical paths.
+ */
 export function normalizeFiles(payload: unknown): { storages: StorageRef[]; files: FileRef[] } {
   const storages: StorageRef[] = [];
   const files: FileRef[] = [];

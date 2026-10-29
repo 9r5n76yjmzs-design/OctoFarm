@@ -1,3 +1,7 @@
+/**
+ * CLI fixture verification entrypoint; validates all fixture manifests and exits nonzero on malformed/missing fixtures.
+ * @module
+ */
 const path = require('node:path');
 const { loadFixtureDirectory } = require('./fixture-loader.ts');
 

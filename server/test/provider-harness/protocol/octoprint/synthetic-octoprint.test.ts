@@ -1,3 +1,7 @@
+/**
+ * Loopback-only synthetic OctoPrint response, fault-injection and lifecycle tests.
+ * @module
+ */
 const path = require('node:path');
 const assert = require('node:assert/strict');
 const { test } = require('node:test');

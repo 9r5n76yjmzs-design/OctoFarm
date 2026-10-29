@@ -1,3 +1,7 @@
+/**
+ * Resource deadline and concurrency regressions, including uncooperative work and cancellation timing.
+ * @module
+ */
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const { ResourcePolicy } = require('../security/resource-policy.ts');

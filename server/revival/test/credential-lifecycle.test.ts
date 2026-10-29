@@ -1,3 +1,7 @@
+/**
+ * Synthetic credential-lease tests for rotation, reauthentication, revocation and absence of secret leakage.
+ * @module
+ */
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const { OctoPrintProvider, OctoPrintProviderError } = require('../providers/octoprint/provider.ts');

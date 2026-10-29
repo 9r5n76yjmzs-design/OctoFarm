@@ -1,3 +1,7 @@
+/**
+ * Host-selected mandatory security checks; each asserts a host boundary with deterministic synthetic inputs.
+ * @module
+ */
 const assert = require('node:assert/strict');
 const { SecretLeakDetector } = require('../host/secret-leak-detector.ts');
 const { runMandatorySecurityGate } = require('../../../revival/security/security-gate.ts');
@@ -10,6 +14,12 @@ const { projectProviderForBrowser } = require('../../../revival/security/browser
 const { SensitiveValueGuard } = require('../../../revival/security/sensitive-values.ts');
 const { normalizeLogicalPath } = require('../../../revival/core/provider-contract.ts');
 
+/**
+ * Requires a synchronous safety rejection.
+ * @param callback - Operation expected to throw.
+ * @returns Nothing.
+ * @throws Assertion when the operation unexpectedly succeeds.
+ */
 function expectThrow(callback: () => unknown): void {
   let threw = false;
   try {
@@ -20,6 +30,10 @@ function expectThrow(callback: () => unknown): void {
   assert.equal(threw, true);
 }
 
+/**
+ * Constructs and executes the full host-owned mandatory Security Gate, independent of provider preferences.
+ * @returns Security gate report for the entire mandatory check set.
+ */
 async function runHostSecurityGate() {
   const checks = {
     'secret-safety': () => {

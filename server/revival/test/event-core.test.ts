@@ -1,3 +1,7 @@
+/**
+ * Deterministic event ingress/replay, bounded queue, state reconciliation and lifecycle regression evidence.
+ * @module
+ */
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const { FakeClock } = require('../../test/provider-harness/host/fake-clock.ts');

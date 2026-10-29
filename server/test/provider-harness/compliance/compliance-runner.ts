@@ -1,3 +1,7 @@
+/**
+ * Official host-owned provider compliance selection; core/security gates run regardless of provider hints.
+ * @module
+ */
 const assert = require('node:assert/strict');
 const { runHostSecurityGate } = require('./host-security-suite.ts');
 const { assertProviderSnapshot } = require('../../../revival/core/provider-contract.ts');
@@ -16,17 +20,65 @@ type Declaration = {
   complianceHints?: Record<string, unknown>;
 };
 
+/**
+ * Minimal provider behavior required by the official compliance runner.
+ */
 type ComplianceProvider = {
+  /**
+   * Read the provider declaration; compliance hints are not authority.
+   * @returns Provider declaration.
+   */
   declaration(): Declaration;
+  /**
+   * Read provider and instance identity.
+   * @returns Identity record.
+   */
   identity(): Record<string, unknown>;
+  /**
+   * Read advertised normalized support.
+   * @returns Capability descriptors.
+   */
   capabilities(): Capability[];
+  /**
+   * Read normalized state.
+   * @returns State record.
+   */
   state(): Record<string, unknown>;
+  /**
+   * Read normalized health independently of state.
+   * @returns Health record.
+   */
   health(): Record<string, unknown>;
+  /**
+   * Initialize provider resources.
+   * @returns Completion, synchronous or asynchronous.
+   */
   initialize(): Promise<void> | void;
+  /**
+   * Connect provider.
+   * @returns Completion, synchronous or asynchronous.
+   */
   connect(): Promise<void> | void;
+  /**
+   * Disconnect provider.
+   * @returns Completion, synchronous or asynchronous.
+   */
   disconnect(): Promise<void> | void;
+  /**
+   * Subscribe to provider events.
+   * @param sink - Event callback.
+   * @returns Unsubscribe callback or undefined.
+   */
   subscribe(sink: (event: unknown) => void): (() => void) | void;
+  /**
+   * Terminate provider lifecycle.
+   * @returns Completion, synchronous or asynchronous.
+   */
   shutdown(): Promise<void> | void;
+  /**
+   * Optional PRINT operation, required only if advertised supported.
+   * @returns Provider-specific operation result.
+   */
   print?(): Promise<unknown> | unknown;
 };
 
@@ -39,6 +91,12 @@ type ComplianceCheckResult = {
 type ProviderFactory = () => ComplianceProvider;
 type Pack = (provider: ComplianceProvider) => Promise<ComplianceCheckResult[]>;
 
+/**
+ * Converts one synchronous or asynchronous compliance assertion into a recorded check.
+ * @param name - Descriptive check name.
+ * @param action - Assertion to execute.
+ * @returns PASS/FAIL check result; caught errors recorded as messages.
+ */
 async function capture(name: string, action: () => Promise<void> | void): Promise<ComplianceCheckResult> {
   try {
     await action();
@@ -61,6 +119,11 @@ const CAPABILITY_PACKS: Readonly<Record<string, Pack>> = Object.freeze({
   ]
 });
 
+/**
+ * Runs mandatory core and security checks plus only supported, known capability packs.
+ * @param factory - Creates the provider under test.
+ * @returns Versioned compliance report; fails for missing/unsupported packs and failed mandatory checks.
+ */
 async function runProviderCompliance(factory: ProviderFactory) {
   const provider = factory();
   const declaration = provider.declaration();

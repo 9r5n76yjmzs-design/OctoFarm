@@ -1,3 +1,10 @@
+/**
+ * Canonical provider-neutral snapshot and runtime validation contract; native fields must not escape into core state.
+ * @module
+ */
+/**
+ * Supported normalized capability names, independent of the native printer API.
+ */
 export type CapabilityId =
   | 'PRINT'
   | 'PAUSE'
@@ -15,31 +22,59 @@ export type CapabilityId =
   | 'STORAGE_REMOVE'
   | 'STORAGE_REFRESH';
 
+/**
+ * Identifies provider implementation, running instance, protocol and versions separately.
+ */
 export interface ProviderIdentity {
+  /** Stable provider implementation kind; shared by instances of that adapter. */
   providerId: string;
+  /** Unique running provider instance, distinct from provider kind and printer ID. */
   providerInstanceId: string;
+  /** Display label for a provider implementation. */
   displayName: string;
+  /** Version reported by the underlying provider service. */
   providerVersion: string;
+  /** Version identifier of this Revival adapter implementation. */
   implementationVersion: string;
+  /** Optional normalized protocol family. */
   protocolFamily?: string;
+  /** Optional negotiated native protocol version. */
   protocolVersion?: string;
 }
 
+/**
+ * Declares supported behavior; availability is represented separately.
+ */
 export interface Capability {
+  /** Provider-neutral operation being declared. */
   id: CapabilityId;
+  /** Whether the adapter implements the operation; distinct from current availability. */
   supported: boolean;
+  /** Optional version of this capability contract. */
   version?: string;
+  /** Optional normalized capability limits; do not pass native objects through. */
   constraints?: Record<string, unknown>;
 }
 
+/**
+ * Describes current ability to invoke a supported capability at a particular observation/revision.
+ */
 export interface OperationAvailability {
+  /** Operation for which this observation applies. */
   capabilityId: CapabilityId;
+  /** Whether the supported operation is currently invokable. */
   available: boolean;
+  /** Optional normalized explanation when unavailable. */
   reason?: string;
+  /** Timestamp associated with the availability observation. */
   observedAt: number;
+  /** Capability revision against which this availability was computed. */
   capabilitiesRevision: number;
 }
 
+/**
+ * Normalized link state; independent of current printer operation.
+ */
 export type ConnectionState =
   | 'UNKNOWN'
   | 'DISCONNECTED'
@@ -48,6 +83,9 @@ export type ConnectionState =
   | 'RECONNECTING'
   | 'FAILED';
 
+/**
+ * Normalized printer operation state; independent of provider transport health.
+ */
 export type OperationalState =
   | 'UNKNOWN'
   | 'IDLE'
@@ -59,70 +97,145 @@ export type OperationalState =
   | 'MAINTENANCE'
   | 'UNAVAILABLE';
 
+/**
+ * Authoritative normalized operational observation, including revision and timestamp.
+ */
 export interface PrinterState {
+  /** Stable printer identity used for domain state reconciliation. */
   printerId: string;
+  /** Normalized printer connection state, not a health substitute. */
   connection: ConnectionState;
+  /** Current normalized printer operation. */
   operation: OperationalState;
+  /** Revision applicable to this observation. */
   capabilitiesRevision: number;
+  /** Observation time used to reject stale state. */
   observedAt: number;
 }
 
+/**
+ * Provider reachability/authentication and transport health, distinct from printer state.
+ */
 export interface ProviderHealth {
+  /** Whether the provider endpoint was reachable on the last observation. */
   reachable: boolean;
+  /** Whether authentication succeeded on the last observation. */
   authenticated: boolean;
+  /** Whether the provider transport is connected. */
   transportConnected: boolean;
+  /** Optional observed latency in milliseconds. */
   latencyMs?: number;
+  /** Optional timestamp of last successful contact. */
   lastSuccessfulContact?: number;
+  /** Whether a provider retry is in progress. */
   retrying: boolean;
+  /** Whether provider health is degraded. */
   degraded: boolean;
+  /** Optional normalized diagnostic reason, not a raw provider exception. */
   reason?: string;
+  /** Timestamp of this health observation. */
   observedAt: number;
 }
 
+/**
+ * Provider-neutral connection reference, not a native port/connector object.
+ */
 export interface ConnectorRef {
+  /** Stable logical connector identifier. */
   id: string;
+  /** Normalized connector transport family. */
   family: 'SERIAL' | 'NETWORK' | 'OTHER' | 'UNKNOWN';
+  /** Whether the connector is currently connected. */
   connected: boolean;
+  /** Optional safe human-readable connector label. */
   displayName?: string;
+  /** Optional normalized connector capability labels. */
   capabilities?: string[];
 }
 
+/**
+ * Provider-neutral storage capabilities and writeability classification.
+ */
 export interface StorageRef {
+  /** Logical storage identity, scoped to the provider. */
   id: string;
+  /** Human-readable storage label. */
   name: string;
+  /** Whether storage is on the printer rather than host. */
   printerSide: boolean;
+  /** Whether the storage medium is removable. */
   removable: boolean;
+  /** Whether storage is presently accessible. */
   available: boolean;
+  /** Whether writes are supported and allowed by storage state. */
   writable: boolean;
+  /** Supported storage-related operations for this reference. */
   capabilities: CapabilityId[];
 }
 
+/**
+ * Provider-logical file identity; path MUST NOT be combined with local filesystem roots.
+ */
 export interface FileRef {
+  /** Logical storage owning this file. */
   storageId: string;
+  /** Safe provider-logical relative path, not a host filesystem path. */
   path: string;
+  /** Base filename of the logical object. */
   name: string;
+  /** Optional user-facing filename. */
   displayName?: string;
+  /** Optional file size as reported by the provider, in bytes. */
   size?: number;
+  /** Optional provider-reported modification timestamp. */
   modifiedAt?: number;
+  /** Optional object-shaped metadata; nested content is not schema-validated here and must not be projected directly. */
   metadata?: Record<string, unknown>;
 }
 
+/**
+ * Single normalized boundary object validated before entering Revival core.
+ */
 export interface ProviderSnapshot {
+  /** Provider and running-instance identity. */
   identity: ProviderIdentity;
+  /** Authoritative capability generation used by snapshot and availability. */
   capabilitiesRevision: number;
+  /** Operations supported by the provider. */
   capabilities: Capability[];
+  /** Runtime availability for supported operations. */
   availability: OperationAvailability[];
+  /** Normalized printer connection and operation observation. */
   state: PrinterState;
+  /** Independent provider transport/authentication health observation. */
   health: ProviderHealth;
+  /** Optional currently described connector. */
   connector?: ConnectorRef;
+  /** Normalized available storage references. */
   storages: StorageRef[];
+  /** Normalized provider-logical file references. */
   files: FileRef[];
 }
 
+/**
+ * Enforces a runtime provider-contract invariant.
+ * @param condition - Assertion condition.
+ * @param message - Stable validation explanation.
+ * @returns Nothing if valid.
+ * @throws Error if validation fails.
+ */
 function invariant(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`Invalid normalized provider value: ${message}`);
 }
 
+/**
+ * Rejects unknown fields in a normalized object.
+ * @param value - Object to inspect.
+ * @param allowed - Explicit list of permitted keys.
+ * @param name - Diagnostic field prefix.
+ * @returns Nothing on success.
+ * @throws Error for non-object/extra properties.
+ */
 function assertOnlyKeys(
   value: unknown,
   allowed: readonly string[],
@@ -134,6 +247,12 @@ function assertOnlyKeys(
   invariant(unexpected.length === 0, `${name} contains unexpected field(s): ${unexpected.join(', ')}`);
 }
 
+/**
+ * Normalizes bounded encoding and separators while rejecting traversal and empty paths.
+ * @param value - Provider-logical path, never a host filesystem path.
+ * @returns Normalized relative path with forward slashes.
+ * @throws Error for malformed/deep encoding, NUL, traversal, absolute/drive paths or empty result.
+ */
 export function normalizeLogicalPath(value: string): string {
   invariant(typeof value === 'string' && value.length > 0, 'file path must be non-empty');
 
@@ -187,23 +306,57 @@ const CONNECTOR_FAMILIES = new Set<ConnectorRef['family']>([
   'SERIAL','NETWORK','OTHER','UNKNOWN'
 ]);
 
+/**
+ * Validates required normalized string fields.
+ * @param value - Unknown value.
+ * @param name - Field label.
+ * @returns Nothing when valid.
+ * @throws Error on empty/non-string data.
+ */
 function nonEmptyString(value: unknown, name: string): asserts value is string {
   invariant(typeof value === 'string' && value.length > 0, `${name} must be a non-empty string`);
 }
 
+/**
+ * Validates optional string fields without coercion.
+ * @param value - Optional field.
+ * @param name - Field label.
+ * @returns Nothing on success.
+ * @throws Error on non-string values.
+ */
 function optionalString(value: unknown, name: string): void {
   if (value !== undefined) nonEmptyString(value, name);
 }
 
+/**
+ * Requires a finite number in normalized data.
+ * @param value - Unknown value.
+ * @param name - Field label.
+ * @returns Nothing on success.
+ * @throws Error on non-numeric/NaN/Infinity values.
+ */
 function finiteNumber(value: unknown, name: string): asserts value is number {
   invariant(typeof value === 'number' && Number.isFinite(value), `${name} must be finite`);
 }
 
+/**
+ * Validates optional records for a normalized boundary.
+ * @param value - Optional record.
+ * @param name - Field label.
+ * @returns Nothing on success.
+ * @throws Error for non-object/array data.
+ */
 function optionalRecord(value: unknown, name: string): void {
   if (value === undefined) return;
   invariant(value !== null && typeof value === 'object' && !Array.isArray(value), `${name} must be an object`);
 }
 
+/**
+ * Enforces allowed fields and semantic values across snapshot, identity, health, capabilities, connector, storage, and files.
+ * @param value - Provider-produced snapshot candidate.
+ * @returns Original snapshot when all nested shapes validate.
+ * @throws Error for native/undeclared fields, invalid enum/number/boolean semantics or unsafe FileRef paths.
+ */
 export function assertProviderSnapshot(value: ProviderSnapshot): ProviderSnapshot {
   assertOnlyKeys(value, [
     'identity','capabilitiesRevision','capabilities','availability','state','health','connector','storages','files'

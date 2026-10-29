@@ -1,3 +1,7 @@
+/**
+ * Host security boundary regression tests; green checks are evidence, not independent security acceptance.
+ * @module
+ */
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');

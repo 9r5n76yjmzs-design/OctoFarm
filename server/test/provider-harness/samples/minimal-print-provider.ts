@@ -1,3 +1,7 @@
+/**
+ * Smallest provider contract example: PRINT only; intentionally includes ignored security-bypass hints.
+ * @module
+ */
 type Capability = {
   id: string;
   supported: boolean;
@@ -32,12 +36,19 @@ type ProviderHealth = {
   observedAt: number;
 };
 
+/**
+ * Demonstrates a provider whose only supported capability is PRINT.
+ */
 class MinimalPrintProvider {
   private initialized = false;
   private connected = false;
   private terminal = false;
   private prints = 0;
 
+  /**
+   * Declares contract version, PRINT support and intentionally rejected security bypass hints.
+   * @returns Provider declaration.
+   */
   declaration() {
     return {
       contractVersion: '0.1',
@@ -49,6 +60,10 @@ class MinimalPrintProvider {
     };
   }
 
+  /**
+   * Describes the implementation and instance without native dependencies.
+   * @returns Provider identity.
+   */
   identity(): ProviderIdentity {
     return {
       providerId: 'minimal-print',
@@ -61,10 +76,18 @@ class MinimalPrintProvider {
     };
   }
 
+  /**
+   * Declares only PRINT support.
+   * @returns Capability list.
+   */
   capabilities(): Capability[] {
     return [{ id: 'PRINT', supported: true }];
   }
 
+  /**
+   * Reports normalized connection and idle/unavailable printer state.
+   * @returns Printer state observation.
+   */
   state(): PrinterState {
     return {
       printerId: 'minimal-printer-1',
@@ -75,6 +98,10 @@ class MinimalPrintProvider {
     };
   }
 
+  /**
+   * Reports provider reachability and authentication independent of printer operation.
+   * @returns Provider health.
+   */
   health(): ProviderHealth {
     return {
       reachable: this.connected,
@@ -86,37 +113,70 @@ class MinimalPrintProvider {
     };
   }
 
+  /**
+   * Initializes the provider before connection.
+   * @returns Nothing.
+   * @throws Error after shutdown.
+   */
   initialize(): void {
     if (this.terminal) throw new Error('provider is shutdown');
     this.initialized = true;
   }
 
+  /**
+   * Transitions to connected after initialization.
+   * @returns Nothing.
+   * @throws Error before initialize or after shutdown.
+   */
   connect(): void {
     if (this.terminal) throw new Error('provider is shutdown');
     if (!this.initialized) throw new Error('provider is not initialized');
     this.connected = true;
   }
 
+  /**
+   * Marks the provider disconnected without shutting it down.
+   * @returns Nothing.
+   */
   disconnect(): void {
     this.connected = false;
   }
 
+  /**
+   * Offers a no-op event subscription for the minimal sample.
+   * @param _sink - Unused consumer callback.
+   * @returns Unsubscribe function.
+   * @throws Error after shutdown.
+   */
   subscribe(_sink: (event: unknown) => void): () => void {
     if (this.terminal) throw new Error('provider is shutdown');
     return () => {};
   }
 
+  /**
+   * Permanently marks provider terminal and disconnected.
+   * @returns Nothing.
+   */
   shutdown(): void {
     this.connected = false;
     this.terminal = true;
   }
 
+  /**
+   * Simulates an accepted PRINT operation without driving hardware.
+   * @returns Accepted result.
+   * @throws Error when disconnected.
+   */
   print(): { accepted: true } {
     if (!this.connected) throw new Error('provider is not connected');
     this.prints++;
     return { accepted: true };
   }
 
+  /**
+   * Reads how many synthetic prints were accepted.
+   * @returns Print count.
+   */
   printCount(): number {
     return this.prints;
   }
