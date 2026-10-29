@@ -1,3 +1,7 @@
+/**
+ * OctoPrint adapter snapshot and protocol compatibility fixtures through host-injected transport.
+ * @module
+ */
 const assert = require('node:assert/strict');
 const { test } = require('node:test');
 const path = require('node:path');
