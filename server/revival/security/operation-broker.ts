@@ -6,6 +6,13 @@
  * Authorizer may be synchronous or asynchronous; only boolean decisions are accepted.
  */
 export interface AuthorizationService {
+  /**
+   * Determine whether the host permits the named provider operation.
+   * @param operation - Host-recognized operation name.
+   * @param context - Host-computed context including privileged classification.
+   * @returns Boolean decision, possibly asynchronous; nonboolean results are rejected by the broker.
+   * @throws Error when authorization service fails.
+   */
   authorize(
     operation: string,
     context: Record<string, unknown>
@@ -16,6 +23,12 @@ export interface AuthorizationService {
  * Optional audit sink; telemetry errors never override authorization.
  */
 export interface TelemetrySink {
+  /**
+   * Record an observational event without influencing authorization.
+   * @param name - Event identifier.
+   * @param attributes - Optional safe structured event dimensions.
+   * @returns Nothing.
+   */
   event(name: string, attributes?: Record<string, unknown>): void;
 }
 

@@ -6,7 +6,13 @@
  * Provider instance and credential identifier used for scoped host lookup.
  */
 export interface CredentialScope {
+  /**
+   * Provider instance owning this credential.
+   */
   providerInstanceId: string;
+  /**
+   * Stable logical credential identifier.
+   */
   credentialId: string;
 }
 
@@ -14,7 +20,13 @@ export interface CredentialScope {
  * Credential value and monotonically increasing lease revision; never serialize outside host transport.
  */
 export interface CredentialLease {
+  /**
+   * Monotonic lease generation used to avoid repeated rejected credentials.
+   */
   revision: number;
+  /**
+   * Secret credential value; must not be logged or included in browser, events or reports.
+   */
   value: string;
 }
 
@@ -22,7 +34,20 @@ export interface CredentialLease {
  * Host-managed current and revision-aware refresh methods for provider credentials.
  */
 export interface CredentialAccessor {
+  /**
+   * Load the current host-held credential lease for this provider instance.
+   * @param scope - Provider instance and credential identity.
+   * @returns Current lease, synchronously or asynchronously.
+   * @throws CredentialUnavailableError when revoked or absent.
+   */
   current(scope: CredentialScope): Promise<CredentialLease> | CredentialLease;
+  /**
+   * Retrieve a potentially newer lease after authentication rejects a revision.
+   * @param scope - Provider instance and credential identity.
+   * @param rejectedRevision - Lease revision rejected by the provider.
+   * @returns Current or refreshed lease.
+   * @throws CredentialUnavailableError when unavailable.
+   */
   refresh(
     scope: CredentialScope,
     rejectedRevision: number

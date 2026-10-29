@@ -25,8 +25,17 @@ export type MandatorySecurityCheck = (typeof MANDATORY_SECURITY_CHECKS)[number];
  * Outcome and message of one mandatory security check.
  */
 export interface SecurityCheckResult {
+  /**
+   * Name of the mandatory host-selected check.
+   */
   name: MandatorySecurityCheck;
+  /**
+   * Whether the check completed without error.
+   */
   passed: boolean;
+  /**
+   * Optional diagnostic message for a failed or missing check.
+   */
   message?: string;
 }
 
@@ -34,9 +43,21 @@ export interface SecurityCheckResult {
  * Overall gate decision, including explicit bypass request detection.
  */
 export interface SecurityGateReport {
+  /**
+   * Fixed report kind identifying the mandatory gate.
+   */
   gate: 'MANDATORY_SECURITY';
+  /**
+   * True only if all checks pass and no bypass request was made.
+   */
   passed: boolean;
+  /**
+   * Whether provider configuration attempted to disable required checks.
+   */
   bypassRequested: boolean;
+  /**
+   * All mandatory check outcomes; one check failure does not skip the others.
+   */
   results: SecurityCheckResult[];
 }
 
