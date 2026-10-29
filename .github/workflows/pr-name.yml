@@ -1,59 +1,34 @@
-name: pr-name-linter
+name: PR Title
 on:
   pull_request:
-    types: ['opened', 'edited', 'reopened', 'synchronize']
+    types: [opened, edited, reopened, synchronize, ready_for_review]
+
+# This check needs only the event payload. Avoid an API call (and its token
+# permission failures) for data GitHub has already delivered to the runner.
+permissions: {}
 
 jobs:
-  main:
+  validate-title:
     name: Validate PR Title
     runs-on: ubuntu-latest
     steps:
-      - uses: amannn/action-semantic-pull-request@v3
-        with:
-          # Configure which types are allowed.
-          # Default: https://github.com/commitizen/conventional-commit-types
-          types: |
-            fix
-            feat
-            refactor
-            perf
-            test
-            breaking
-            database
-            security
-            removed
-            ci
-            chore
-          # Configure which scopes are allowed.
-          scopes: |
-            docker
-            server
-            client
-            main
-            release
-          # Configure that a scope must always be provided.
-          requireScope: true
-          # Configure additional validation for the subject based on a regex.
-          # This example ensures the subject doesn't start with an uppercase character.
-          subjectPattern: ^(?![A-Z]).+$
-          # If `subjectPattern` is configured, you can use this property to override
-          # the default error message that is shown when the pattern doesn't match.
-          # The variables `subject` and `title` can be used within the message.
-          subjectPatternError: |
-            The subject "{subject}" found in the pull request title "{title}"
-            didn't match the configured pattern. Please ensure that the subject
-            doesn't start with an uppercase character.
-          # For work-in-progress PRs you can typically use draft pull requests
-          # from Github. However, private repositories on the free plan don't have
-          # this option and therefore this action allows you to opt-in to using the
-          # special "[WIP]" prefix to indicate this state. This will avoid the
-          # validation of the PR title and the pull request checks remain pending.
-          # Note that a second check will be reported if this is enabled.
-          wip: true
-          # When using "Squash and merge" on a PR with only one commit, GitHub
-          # will suggest using that commit message instead of the PR title for the
-          # merge commit, and it's easy to commit this by mistake. Enable this option
-          # to also validate the commit message for one commit PRs.
-          validateSingleCommit: true
+      - name: Validate Conventional Commit title
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        shell: bash
+        run: |
+          node <<'NODE'
+          const allowed = new Set([
+            'fix', 'feat', 'refactor', 'perf', 'test', 'breaking',
+            'database', 'security', 'removed', 'ci', 'chore'
+          ]);
+          const title = process.env.PR_TITLE ?? '';
+          const match = /^(?<type>[a-z]+)(?:\((?<scope>[a-z][a-z0-9-]*)\))?!?: (?<subject>[^\r\n]+)$/.exec(title);
+          if (!match || !allowed.has(match.groups.type) || /^[A-Z]/.test(match.groups.subject)) {
+            console.error('Invalid PR title. Use type(scope): lowercase subject or type: lowercase subject.');
+            console.error('Allowed types: ' + [...allowed].join(', '));
+            process.exitCode = 1;
+          } else {
+            console.log('PR title conforms to Conventional Commits.');
+          }
+          NODE
