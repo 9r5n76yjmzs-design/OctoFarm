@@ -1,6 +1,13 @@
+/**
+ * Allowlisted diagnostic serialization: unknown native fields are discarded and known secrets are redacted.
+ * @module
+ */
 import { requireSensitiveValueGuard } from './sensitive-values.ts';
 import type { SensitiveValueGuard } from './sensitive-values.ts';
 
+/**
+ * Optional host-owned identifiers and HTTP status in serialized diagnostics.
+ */
 export interface DiagnosticContext {
   providerInstanceId?: string;
   printerId?: string;
@@ -24,6 +31,14 @@ const CATEGORIES = new Set([
 
 const TOKEN = /^[A-Za-z0-9_.:-]{1,96}$/;
 
+/**
+ * Validates an optional bounded identifier token and redacts secrets.
+ * @param value - Candidate token.
+ * @param name - Field name.
+ * @param guard - Host secret guard.
+ * @returns Redacted token or undefined.
+ * @throws Error on invalid token.
+ */
 function optionalToken(
   value: unknown,
   name: string,
@@ -36,6 +51,14 @@ function optionalToken(
   return guard.redact(value);
 }
 
+/**
+ * Validates category, token, retry flag and safe message; never copies arbitrary errors or causes.
+ * @param input - Untrusted diagnostic record.
+ * @param context - Host-owned identities and HTTP status.
+ * @param sensitiveGuard - Required host secret guard.
+ * @returns Allowlisted diagnostic record.
+ * @throws Error for invalid fields or missing guard.
+ */
 export function serializeProviderDiagnostic(
   input: Record<string, unknown>,
   context: DiagnosticContext = {},

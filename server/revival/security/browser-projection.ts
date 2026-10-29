@@ -1,11 +1,28 @@
+/**
+ * Browser projection explicitly selects provider-neutral fields and redacts string output; it never clones native objects.
+ * @module
+ */
 import type { ProviderSnapshot } from '../core/provider-contract.ts';
 import { requireSensitiveValueGuard } from './sensitive-values.ts';
 import type { SensitiveValueGuard } from './sensitive-values.ts';
 
+/**
+ * Redacts an optional projected string.
+ * @param value - Candidate value.
+ * @param guard - Host secret guard.
+ * @returns Redacted text or undefined.
+ */
 function safeString(value: unknown, guard: SensitiveValueGuard): string | undefined {
   return value === undefined ? undefined : guard.redact(String(value));
 }
 
+/**
+ * Projects explicitly allowed nested fields and applies host-known secret redaction.
+ * @param snapshot - Normalized provider snapshot.
+ * @param sensitiveGuard - Required host-known secret guard.
+ * @returns Safe browser-facing copy.
+ * @throws Error when guard is missing or invalid.
+ */
 export function projectProviderForBrowser(
   snapshot: ProviderSnapshot,
   sensitiveGuard: SensitiveValueGuard
