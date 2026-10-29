@@ -1,3 +1,7 @@
+/**
+ * Local-only synthetic OctoPrint HTTP server driven by deterministic fixtures; no printer network involved.
+ * @module
+ */
 const http = require('node:http');
 
 type Scheduler = { schedule(delayMs: number, callback: () => void): number };
@@ -23,6 +27,9 @@ type CapturedRequest = {
   body: string;
 };
 
+/**
+ * Serves fixture HTTP routes on loopback and records requests for assertions.
+ */
 class SyntheticOctoPrint {
   private scenario: Scenario;
   private scheduler?: Scheduler;
@@ -30,23 +37,54 @@ class SyntheticOctoPrint {
   private endpointValue: string | null = null;
   private requests: CapturedRequest[] = [];
 
+  /**
+   * Configures the synthetic API scenario and optional fake scheduler.
+   * @param scenario - Validated fixture route set.
+   * @param options - Optional test scheduler.
+   */
   constructor(scenario: Scenario, options: { scheduler?: Scheduler } = {}) {
     this.scenario = scenario;
     this.scheduler = options.scheduler;
   }
 
+  /**
+   * Gets the loopback URL after startup.
+   * @returns Local endpoint.
+   * @throws Error before start or after stop.
+   */
   endpoint(): string {
     if (!this.endpointValue) throw new Error('SyntheticOctoPrint is not started');
     return this.endpointValue;
   }
 
+  /**
+   * Reads configured OctoPrint protocol mode.
+   * @returns Scenario mode.
+   */
   mode(): string { return this.scenario.mode; }
+  /**
+   * Reads source fixture identifier.
+   * @returns Fixture ID.
+   */
   fixtureId(): string { return this.scenario.fixtureId; }
+  /**
+   * Returns copies of observed HTTP request metadata.
+   * @returns Read-only request list.
+   */
   capturedRequests(): readonly CapturedRequest[] {
     return this.requests.map((request) => ({ ...request, headers: { ...request.headers } }));
   }
+  /**
+   * Resets captured requests.
+   * @returns Nothing.
+   */
   clearCapturedRequests(): void { this.requests = []; }
 
+  /**
+   * Starts an ephemeral listener on 127.0.0.1 and serves declared responses, delays and disconnects.
+   * @returns Promise resolved when listening.
+   * @throws Error on double-start or listener failure.
+   */
   async start(): Promise<void> {
     if (this.server) throw new Error('SyntheticOctoPrint is already started');
 
@@ -111,6 +149,11 @@ class SyntheticOctoPrint {
     });
   }
 
+  /**
+   * Stops HTTP listener and releases its ephemeral port; safe when already stopped.
+   * @returns Promise resolved after close.
+   * @throws Error if server close fails.
+   */
   async stop(): Promise<void> {
     if (!this.server) return;
     const server = this.server;
@@ -121,6 +164,12 @@ class SyntheticOctoPrint {
     );
   }
 
+  /**
+   * Buffers a synthetic client request body for assertions.
+   * @param req - Incoming Node HTTP request.
+   * @returns UTF-8 body text.
+   * @throws Error if the request stream fails.
+   */
   private readBody(req: any): Promise<string> {
     return new Promise((resolve, reject) => {
       const chunks: Buffer[] = [];
