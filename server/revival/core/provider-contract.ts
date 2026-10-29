@@ -189,7 +189,7 @@ export interface FileRef {
   size?: number;
   /** Optional provider-reported modification timestamp. */
   modifiedAt?: number;
-  /** Optional bounded, normalized metadata; never raw secret-bearing native fields. */
+  /** Optional object-shaped metadata; nested content is not schema-validated here and must not be projected directly. */
   metadata?: Record<string, unknown>;
 }
 

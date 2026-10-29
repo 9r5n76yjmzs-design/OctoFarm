@@ -14,7 +14,11 @@ type Handlers = {
 };
 
 /**
- * Transport adapter required by the controller; provides connect callbacks and close.
+ * Transport adapter required by the controller.
+ * connect(handlers) registers open/message/close/error callbacks for one transport
+ * instance and returns no value. close() terminates that instance; the caller
+ * ignores callbacks from replaced or terminal transports. Transport failures
+ * may be reported through callbacks or thrown by the adapter.
  */
 export interface EventTransport { connect(handlers: Handlers): void; close(): void; }
 /**
