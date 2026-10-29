@@ -1,20 +1,46 @@
-name: Node.js CI
+name: Legacy Server Install Smoke
 
+# The preserved server still declares Node >=14, but Node 14-17 have
+# reached end of life. This is a bounded legacy dependency-install check,
+# NOT a declaration of the supported Revival runtime (OR-12 decides that).
+# The independent OR-11 provider tests run in or11-provider-compliance.yml.
 on:
-  push:
-    branches: [ beta, master ]
   pull_request:
+    paths:
+      - 'server/**'
+      - '!server/revival/**'
+      - '!server/test/provider-harness/**'
+      - '.github/workflows/nodejs.yml'
+  push:
+    branches: [beta, master]
+    paths:
+      - 'server/**'
+      - '!server/revival/**'
+      - '!server/test/provider-harness/**'
+      - '.github/workflows/nodejs.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
 jobs:
-  nodejs-build:
+  legacy-install:
+    name: Legacy server dependency install (Node 22.16.0)
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        node-version: [ 17.x, 16.x, 15.x, 14.x ]
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v2
-      - name: Use Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v1
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+      - name: Setup Node.js 22.16.0
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
         with:
-          node-version: ${{ matrix.node-version }}
-      - run: npm install -g npm
-      - run: cd server && npm ci
+          node-version: 22.16.0
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+      - name: Print toolchain versions
+        run: |
+          node --version
+          npm --version
+      - name: Install legacy server dependencies
+        working-directory: server
+        run: npm ci --no-audit --no-fund
