@@ -1,7 +1,17 @@
+/**
+ * Rejects unsafe provider-logical paths before canonical provider FileRef normalization.
+ * @module
+ */
 import { normalizeLogicalPath } from '../core/provider-contract.ts';
 
 const MAX_DECODE_ROUNDS = 8;
 
+/**
+ * Decodes a bounded number of times and rejects traversal, NUL and absolute paths.
+ * @param value - Untrusted provider-logical path.
+ * @returns Canonical relative logical path.
+ * @throws Error for unsafe, malformed, deep-encoded or empty input.
+ */
 export function validateProviderLogicalPath(value: string): string {
   if (typeof value !== 'string' || value.length === 0) throw new Error('Path is required');
 

@@ -1,3 +1,10 @@
+/**
+ * Host-mediated networking with URL, DNS/IP, connected peer, redirect, header, payload and deadline policy.
+ * @module
+ */
+/**
+ * Trusted executor restrictions: approved IPs, measured response bound, manual redirects, abort.
+ */
 export interface HostNetworkExecutionPolicy {
   approvedAddresses: readonly string[];
   maxResponseBytes: number;
@@ -5,6 +12,9 @@ export interface HostNetworkExecutionPolicy {
   signal: AbortSignal;
 }
 
+/**
+ * Transport response must reflect the actual connected peer and measured response bytes.
+ */
 export interface HostNetworkResponse {
   status: number;
   ok: boolean;
@@ -14,6 +24,9 @@ export interface HostNetworkResponse {
   json(): Promise<unknown>;
 }
 
+/**
+ * Trusted executor is responsible for enforcing host-selected peer and response-size bounds.
+ */
 export interface HostNetworkExecutor {
   execute(
     url: string,
@@ -22,10 +35,16 @@ export interface HostNetworkExecutor {
   ): Promise<HostNetworkResponse>;
 }
 
+/**
+ * Injectable DNS resolver for policy checking.
+ */
 export interface HostNameResolver {
   resolve(hostname: string): Promise<string[]>;
 }
 
+/**
+ * Host-owned origin, approved address, protocol, redirect and resource limits.
+ */
 export interface HostNetworkPolicy {
   allowedOrigins: string[];
   allowedAddressesByHost: Record<string, string[]>;
@@ -55,6 +74,12 @@ const FORBIDDEN_REQUEST_HEADERS = new Set([
   'x-rewrite-url'
 ]);
 
+/**
+ * Rejects authority/proxy/hop-by-hop and CR/LF-bearing headers.
+ * @param headers - Candidate header record.
+ * @returns Allowed application headers or undefined.
+ * @throws Error on invalid or forbidden headers.
+ */
 function sanitizeRequestHeaders(headers: Record<string, string> | undefined): Record<string, string> | undefined {
   if (!headers) return undefined;
   const output: Record<string, string> = {};
@@ -71,6 +96,9 @@ function sanitizeRequestHeaders(headers: Record<string, string> | undefined): Re
   return output;
 }
 
+/**
+ * Executes provider HTTP requests through host-owned network mediation.
+ */
 export class HostNetworkClient {
   private readonly executor: HostNetworkExecutor;
   private readonly resolver: HostNameResolver;
@@ -82,6 +110,13 @@ export class HostNetworkClient {
   private readonly maxTimeoutMs: number;
   private readonly records: { url: string; allowed: boolean; reason?: string }[] = [];
 
+  /**
+   * Validates network policy limits and binds executor/resolver.
+   * @param policy - Host network policy.
+   * @param executor - Trusted transport executor.
+   * @param resolver - Host name resolver.
+   * @throws Error on invalid limits.
+   */
   constructor(policy: HostNetworkPolicy, executor: HostNetworkExecutor, resolver: HostNameResolver) {
     if (!Number.isInteger(policy.maxRedirects) || policy.maxRedirects < 0) {
       throw new Error('maxRedirects must be a non-negative integer');
@@ -105,6 +140,13 @@ export class HostNetworkClient {
     this.maxTimeoutMs = policy.maxTimeoutMs;
   }
 
+  /**
+   * Validates URL and address, bounds completion and redirects, then checks executor response.
+   * @param url - Destination URL.
+   * @param init - Optional method and allowed headers.
+   * @returns Host executor response.
+   * @throws Error for policy, timeout, peer, redirect or size denial.
+   */
   async request(
     url: string,
     init: { method?: string; headers?: Record<string, string> } = {}
@@ -177,10 +219,20 @@ export class HostNetworkClient {
     }
   }
 
+  /**
+   * Reads recorded allow/deny decisions without exposing mutable storage.
+   * @returns Copy of decision history.
+   */
   history() {
     return this.records.map((record) => ({ ...record }));
   }
 
+  /**
+   * Resolves and approves an endpoint before invoking trusted transport.
+   * @param url - Requested URL.
+   * @returns Approved resolved addresses.
+   * @throws Error for invalid URL, protocol, origin, credentials or DNS result.
+   */
   private async authorize(url: string): Promise<string[]> {
     let parsed: URL;
     try {

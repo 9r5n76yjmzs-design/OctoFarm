@@ -1,3 +1,10 @@
+/**
+ * Mandatory host-selected checks cannot be suppressed by provider configuration.
+ * @module
+ */
+/**
+ * Canonical host security checks evaluated for every provider.
+ */
 export const MANDATORY_SECURITY_CHECKS = [
   'secret-safety',
   'network-mediation',
@@ -9,14 +16,23 @@ export const MANDATORY_SECURITY_CHECKS = [
   'browser-credential-boundary'
 ] as const;
 
+/**
+ * Exact security check name union.
+ */
 export type MandatorySecurityCheck = (typeof MANDATORY_SECURITY_CHECKS)[number];
 
+/**
+ * Outcome and message of one mandatory security check.
+ */
 export interface SecurityCheckResult {
   name: MandatorySecurityCheck;
   passed: boolean;
   message?: string;
 }
 
+/**
+ * Overall gate decision, including explicit bypass request detection.
+ */
 export interface SecurityGateReport {
   gate: 'MANDATORY_SECURITY';
   passed: boolean;
@@ -24,6 +40,12 @@ export interface SecurityGateReport {
   results: SecurityCheckResult[];
 }
 
+/**
+ * Executes every host-supplied mandatory check; missing checks and bypass requests fail compliance.
+ * @param checks - Host-provided check implementations.
+ * @param providerOptions - Untrusted provider configuration.
+ * @returns Report with each mandatory outcome, including failures.
+ */
 export async function runMandatorySecurityGate(
   checks: Partial<Record<MandatorySecurityCheck, () => Promise<void> | void>>,
   providerOptions: Record<string, unknown> = {}
