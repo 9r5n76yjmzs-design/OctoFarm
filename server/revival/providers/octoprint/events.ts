@@ -1,9 +1,23 @@
+/**
+ * OctoPrint native events are translated to runtime-validated, instance-scoped domain events.
+ * @module
+ */
 import { assertDomainEvent } from '../../core/domain-event.ts';
 import type { DomainEvent } from '../../core/domain-event.ts';
 import type { PrinterState } from '../../core/provider-contract.ts';
 
 type Context = { providerInstanceId: string; printerId: string; now: () => number; capabilitiesRevision: number };
 
+/**
+ * Creates and validates a typed event envelope.
+ * @param context - Provider identity, clock and revision.
+ * @param id - Event identifier.
+ * @param type - Domain event type.
+ * @param occurredAt - Source event timestamp.
+ * @param payload - Normalized event payload.
+ * @returns Validated domain event.
+ * @throws Error for invalid payloads.
+ */
 function base(context: Context, id: string, type: DomainEvent['type'], occurredAt: number, payload: unknown): DomainEvent {
   return assertDomainEvent({
     schemaVersion: 1,
@@ -18,6 +32,12 @@ function base(context: Context, id: string, type: DomainEvent['type'], occurredA
   });
 }
 
+/**
+ * Maps a native state label into a normalized printer observation.
+ * @param context - Printer identity and clock.
+ * @param native - Native operation state.
+ * @returns Normalized printer state.
+ */
 function stateFromNative(context: Context, native: string): PrinterState {
   const value = native.toLowerCase();
   let operation: PrinterState['operation'] = 'UNKNOWN';
@@ -36,6 +56,13 @@ function stateFromNative(context: Context, native: string): PrinterState {
   };
 }
 
+/**
+ * Translates supported events; drops unknown native messages.
+ * @param raw - Untrusted input.
+ * @param context - Instance and printer metadata.
+ * @returns Validated domain event or undefined.
+ * @throws Error for recognized but invalid event payloads.
+ */
 export function translateOctoPrintEvent(raw: unknown, context: Context): DomainEvent | undefined {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
   const record = raw as Record<string, unknown>;

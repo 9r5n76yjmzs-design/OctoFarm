@@ -1,3 +1,7 @@
+/**
+ * OctoPrint adapter depends on host-provided network and credential services; no direct fetch fallback.
+ * @module
+ */
 import { assertProviderSnapshot } from '../../core/provider-contract.ts';
 import type { ProviderHealth, ProviderIdentity, ProviderSnapshot } from '../../core/provider-contract.ts';
 import {
@@ -17,16 +21,25 @@ import {
   normalizeState
 } from './normalization.ts';
 
+/**
+ * Minimal host-mediated HTTP response interface.
+ */
 export interface HttpResponseLike {
   status: number;
   ok: boolean;
   json(): Promise<unknown>;
 }
 
+/**
+ * Host-injected HTTP transport required by the provider.
+ */
 export interface HttpTransport {
   request(url: string, init?: { method?: string; headers?: Record<string, string> }): Promise<HttpResponseLike>;
 }
 
+/**
+ * Normalized provider error classifications.
+ */
 export type ProviderErrorCategory =
   | 'AUTHENTICATION'
   | 'AUTHORIZATION'
@@ -35,11 +48,21 @@ export type ProviderErrorCategory =
   | 'PROVIDER_ERROR'
   | 'DATA_INVALID';
 
+/**
+ * Structured provider error without credential-bearing diagnostics.
+ */
 export class OctoPrintProviderError extends Error {
   readonly category: ProviderErrorCategory;
   readonly operation: string;
   readonly retryable: boolean;
 
+  /**
+   * Creates a categorized provider error.
+   * @param category - Normalized category.
+   * @param operation - Logical operation.
+   * @param retryable - Retry hint.
+   * @param message - Safe message.
+   */
   constructor(category: ProviderErrorCategory, operation: string, retryable: boolean, message: string) {
     super(message);
     this.name = 'OctoPrintProviderError';
@@ -49,6 +72,12 @@ export class OctoPrintProviderError extends Error {
   }
 }
 
+/**
+ * Maps HTTP status to a normalized provider error.
+ * @param status - HTTP response code.
+ * @param operation - Logical operation.
+ * @returns Categorized provider error.
+ */
 function statusError(status: number, operation: string): OctoPrintProviderError {
   if (status === 401) return new OctoPrintProviderError('AUTHENTICATION', operation, false, 'Provider authentication failed');
   if (status === 403) return new OctoPrintProviderError('AUTHORIZATION', operation, false, 'Provider authorization failed');
@@ -56,6 +85,9 @@ function statusError(status: number, operation: string): OctoPrintProviderError 
   return new OctoPrintProviderError('PROVIDER_ERROR', operation, false, `Provider request failed with status ${status}`);
 }
 
+/**
+ * Orchestrates network-mediated version, connection and file observations.
+ */
 export class OctoPrintProvider {
   private capabilitiesRevision = 1;
   private readonly endpoint: string;
@@ -66,6 +98,16 @@ export class OctoPrintProvider {
   private readonly now: () => number;
   private lastHealth: ProviderHealth;
 
+  /**
+   * Requires an injected host transport, scoped credentials and an optional clock.
+   * @param endpoint - Approved OctoPrint API base.
+   * @param providerInstanceId - Instance identity.
+   * @param printerId - Printer identity.
+   * @param transport - Host transport.
+   * @param credentials - Host credential accessor.
+   * @param now - Observation clock.
+   * @throws Error for missing host services.
+   */
   constructor(
     endpoint: string,
     providerInstanceId: string,
@@ -96,10 +138,19 @@ export class OctoPrintProvider {
     };
   }
 
+  /**
+   * Returns last known normalized health.
+   * @returns Copy of provider health without secrets.
+   */
   health(): ProviderHealth {
     return { ...this.lastHealth };
   }
 
+  /**
+   * Discovers version and normalizes state, files and capabilities.
+   * @returns Validated provider-neutral snapshot.
+   * @throws OctoPrintProviderError on auth, transport, HTTP, or malformed JSON; Error for invalid normalized output.
+   */
   async snapshot(): Promise<ProviderSnapshot> {
     const observedAt = this.now();
     const initial = await this.getJson('/api/version', 'version discovery');
@@ -154,6 +205,12 @@ export class OctoPrintProvider {
     });
   }
 
+  /**
+   * Updates the capability generation without allowing regression.
+   * @param revision - Monotonic revision.
+   * @returns Nothing.
+   * @throws Error for invalid or decreasing revision.
+   */
   setCapabilitiesRevision(revision: number): void {
     if (!Number.isInteger(revision) || revision < this.capabilitiesRevision) {
       throw new Error('capabilitiesRevision must monotonically increase');
@@ -161,6 +218,10 @@ export class OctoPrintProvider {
     this.capabilitiesRevision = revision;
   }
 
+  /**
+   * Derives instance-specific API credential scope.
+   * @returns Credential lookup scope.
+   */
   private credentialScope(): CredentialScope {
     return {
       providerInstanceId: this.providerInstanceId,
@@ -168,6 +229,12 @@ export class OctoPrintProvider {
     };
   }
 
+  /**
+   * Reads or refreshes a scoped credential lease after 401.
+   * @param rejectedRevision - Optional rejected lease revision.
+   * @returns Validated credential lease.
+   * @throws OctoPrintProviderError for missing/invalid credential.
+   */
   private async getCredential(
     rejectedRevision?: number
   ): Promise<CredentialLease> {
@@ -187,6 +254,14 @@ export class OctoPrintProvider {
     }
   }
 
+  /**
+   * Calls the host transport with an ephemeral credential lease.
+   * @param path - Relative API route.
+   * @param headers - Optional negotiation headers.
+   * @param lease - Credential lease.
+   * @returns HTTP response.
+   * @throws Transport errors propagate.
+   */
   private async send(
     path: string,
     headers: Record<string, string> | undefined,
@@ -200,6 +275,14 @@ export class OctoPrintProvider {
     });
   }
 
+  /**
+   * Fetches object JSON and retries a 401 once with a newer lease.
+   * @param path - API route.
+   * @param operation - Diagnostic operation.
+   * @param headers - Optional headers.
+   * @returns Parsed JSON record.
+   * @throws OctoPrintProviderError for failed request or invalid data.
+   */
   private async getJson(
     path: string,
     operation: string,
@@ -253,6 +336,11 @@ export class OctoPrintProvider {
     }
   }
 
+  /**
+   * Records request outcomes and a fresh observation timestamp.
+   * @param update - Health fields to merge.
+   * @returns Nothing.
+   */
   private markHealth(
     update: Partial<ProviderHealth>
   ): void {
