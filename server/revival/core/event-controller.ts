@@ -1,3 +1,7 @@
+/**
+ * Manages provider event transport lifecycle, bounded reconnect attempts, and terminal shutdown.
+ * @module
+ */
 import type { DomainEvent } from './domain-event.ts';
 
 type Scheduler = { schedule(delayMs: number, callback: () => void): number; cancel(id: number): void };
@@ -9,11 +13,23 @@ type Handlers = {
   onError: (error: unknown) => void;
 };
 
+/**
+ * Transport adapter required by the controller; provides connect callbacks and close.
+ */
 export interface EventTransport { connect(handlers: Handlers): void; close(): void; }
+/**
+ * Creates an event transport on initial connection and on reconnect.
+ */
 export type EventTransportFactory = () => EventTransport;
+/**
+ * Converts native transport messages into normalized domain events or ignores them.
+ */
 export type EventTranslator = (value: unknown) => DomainEvent | undefined;
 type ControllerState = 'IDLE' | 'CONNECTING' | 'CONNECTED' | 'DISCONNECTED' | 'RECONNECTING' | 'DEGRADED' | 'SHUTDOWN';
 
+/**
+ * Owns connection state and retries; stale transport callbacks cannot mutate a replacement connection.
+ */
 export class EventController {
   private readonly factory: EventTransportFactory;
   private readonly scheduler: Scheduler;
@@ -28,6 +44,14 @@ export class EventController {
   private value: ControllerState = 'IDLE';
   private lastReason?: string;
 
+  /**
+   * Wires transport, testable scheduler, bounded ingress, translator, and retry delays.
+   * @param factory - Creates a new transport per connection attempt.
+   * @param scheduler - Host scheduler for cancellation and backoff.
+   * @param ingress - Normalized event admission boundary.
+   * @param translate - Provider-owned native event normalizer.
+   * @param backoff - Delay for each allowed reconnect attempt in milliseconds.
+   */
   constructor(factory: EventTransportFactory, scheduler: Scheduler, ingress: Ingress, translate: EventTranslator, backoff: number[] = [100, 250, 500]) {
     this.factory = factory;
     this.scheduler = scheduler;
@@ -36,8 +60,17 @@ export class EventController {
     this.backoff = backoff;
   }
 
+  /**
+   * Returns a snapshot of connection/retry/degradation state.
+   * @returns Current state, attempts, last reason, and terminal flag.
+   */
   state() { return { state: this.value, reconnectAttempts: this.attempt, reason: this.lastReason, terminal: this.terminal }; }
 
+  /**
+   * Starts or resumes transport; duplicate connections are ignored.
+   * @returns Nothing.
+   * @throws Error after terminal shutdown.
+   */
   connect(): void {
     if (this.terminal) throw new Error('controller is shutdown');
     if (this.value === 'CONNECTING' || this.value === 'CONNECTED' || this.value === 'RECONNECTING') return;
@@ -45,6 +78,10 @@ export class EventController {
     this.open(false);
   }
 
+  /**
+   * Closes the active transport and cancels retries without permanently closing the controller.
+   * @returns Nothing.
+   */
   disconnect(): void {
     if (this.terminal) return;
     this.manualDisconnect = true;
@@ -54,6 +91,10 @@ export class EventController {
     this.value = 'DISCONNECTED';
   }
 
+  /**
+   * Permanently disables reconnect and ignores future callbacks.
+   * @returns Nothing; idempotent.
+   */
   shutdown(): void {
     if (this.terminal) return;
     this.terminal = true;
@@ -64,6 +105,11 @@ export class EventController {
     this.value = 'SHUTDOWN';
   }
 
+  /**
+   * Binds callback handlers to the current transport instance to discard stale responses.
+   * @param reconnect - Whether this is a backoff retry.
+   * @returns Nothing.
+   */
   private open(reconnect: boolean): void {
     if (this.terminal) return;
     this.value = reconnect ? 'RECONNECTING' : 'CONNECTING';
@@ -101,6 +147,10 @@ export class EventController {
     });
   }
 
+  /**
+   * Schedules the next bounded retry or records exhausted/degraded state.
+   * @returns Nothing.
+   */
   private scheduleReconnect(): void {
     if (this.terminal || this.manualDisconnect) return;
     if (this.attempt >= this.backoff.length) {

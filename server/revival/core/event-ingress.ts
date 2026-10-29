@@ -1,9 +1,16 @@
+/**
+ * Maintains bounded event queues, provider-instance-scoped replay retention, and isolated consumer delivery.
+ * @module
+ */
 import { assertDomainEvent, replayKey, streamKey } from './domain-event.ts';
 import type { DomainEvent } from './domain-event.ts';
 
 type Scheduler = { schedule(delayMs: number, callback: () => void): number };
 type Consumer = (event: DomainEvent) => void;
 
+/**
+ * Admission result distinguishing duplicates, backpressure, and closed ingress.
+ */
 export interface IngressResult {
   accepted: boolean;
   duplicate: boolean;
@@ -11,6 +18,9 @@ export interface IngressResult {
   reason?: 'DUPLICATE' | 'BACKPRESSURE' | 'CLOSED';
 }
 
+/**
+ * Schedules FIFO delivery per stream while bounding both queue entries and replay memory.
+ */
 export class BoundedEventIngress {
   private readonly scheduler: Scheduler;
   private readonly consumer: Consumer;
@@ -26,6 +36,14 @@ export class BoundedEventIngress {
   private degraded = false;
   private failures = 0;
 
+  /**
+   * Configures bounded queues, a finite replay identity window, and deterministic delivery.
+   * @param scheduler - Schedules per-stream drain callbacks.
+   * @param consumer - Handles accepted events; exceptions are recorded, not rethrown.
+   * @param capacity - Maximum queued event count across streams.
+   * @param dedupeCapacity - Maximum retained replay identities.
+   * @throws Error for non-positive or non-integer capacities.
+   */
   constructor(
     scheduler: Scheduler,
     consumer: Consumer,
@@ -40,6 +58,12 @@ export class BoundedEventIngress {
     this.dedupeCapacity = dedupeCapacity;
   }
 
+  /**
+   * Validates, deduplicates and queues an event without invoking consumers synchronously.
+   * @param event - Runtime-validated domain event.
+   * @returns Admission status and explicit refusal reason.
+   * @throws Error when event violates its normalized schema.
+   */
   enqueue(event: DomainEvent): IngressResult {
     if (this.closed) return { accepted: false, duplicate: false, degraded: this.degraded, reason: 'CLOSED' };
     assertDomainEvent(event);
@@ -67,6 +91,10 @@ export class BoundedEventIngress {
     return { accepted: true, duplicate: false, degraded: this.degraded };
   }
 
+  /**
+   * Reports queue load, replay retention, degradation, failures and closed state.
+   * @returns Observability snapshot; no mutable internal collections.
+   */
   status() {
     return {
       queued: this.queued,
@@ -79,6 +107,10 @@ export class BoundedEventIngress {
     };
   }
 
+  /**
+   * Closes ingress and clears queues and replay-memory structures.
+   * @returns Nothing; future events are refused.
+   */
   close(): void {
     this.closed = true;
     this.queues.clear();
@@ -89,6 +121,11 @@ export class BoundedEventIngress {
     this.queued = 0;
   }
 
+  /**
+   * Records one accepted replay identity, evicting oldest identities at capacity.
+   * @param identity - Provider-instance-scoped replay key.
+   * @returns Nothing.
+   */
   private remember(identity: string): void {
     this.seen.add(identity);
     this.seenOrder.push(identity);
@@ -104,6 +141,11 @@ export class BoundedEventIngress {
     }
   }
 
+  /**
+   * Delivers one event to its consumer and isolates thrown consumer errors.
+   * @param key - Provider/printer stream key.
+   * @returns Nothing.
+   */
   private drain(key: string): void {
     if (this.closed) {
       this.draining.delete(key);

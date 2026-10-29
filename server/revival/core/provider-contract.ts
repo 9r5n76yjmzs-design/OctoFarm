@@ -1,3 +1,10 @@
+/**
+ * Canonical provider-neutral snapshot and runtime validation contract; native fields must not escape into core state.
+ * @module
+ */
+/**
+ * Supported normalized capability names, independent of the native printer API.
+ */
 export type CapabilityId =
   | 'PRINT'
   | 'PAUSE'
@@ -15,6 +22,9 @@ export type CapabilityId =
   | 'STORAGE_REMOVE'
   | 'STORAGE_REFRESH';
 
+/**
+ * Identifies provider implementation, running instance, protocol and versions separately.
+ */
 export interface ProviderIdentity {
   providerId: string;
   providerInstanceId: string;
@@ -25,6 +35,9 @@ export interface ProviderIdentity {
   protocolVersion?: string;
 }
 
+/**
+ * Declares supported behavior; availability is represented separately.
+ */
 export interface Capability {
   id: CapabilityId;
   supported: boolean;
@@ -32,6 +45,9 @@ export interface Capability {
   constraints?: Record<string, unknown>;
 }
 
+/**
+ * Describes current ability to invoke a supported capability at a particular observation/revision.
+ */
 export interface OperationAvailability {
   capabilityId: CapabilityId;
   available: boolean;
@@ -40,6 +56,9 @@ export interface OperationAvailability {
   capabilitiesRevision: number;
 }
 
+/**
+ * Normalized link state; independent of current printer operation.
+ */
 export type ConnectionState =
   | 'UNKNOWN'
   | 'DISCONNECTED'
@@ -48,6 +67,9 @@ export type ConnectionState =
   | 'RECONNECTING'
   | 'FAILED';
 
+/**
+ * Normalized printer operation state; independent of provider transport health.
+ */
 export type OperationalState =
   | 'UNKNOWN'
   | 'IDLE'
@@ -59,6 +81,9 @@ export type OperationalState =
   | 'MAINTENANCE'
   | 'UNAVAILABLE';
 
+/**
+ * Authoritative normalized operational observation, including revision and timestamp.
+ */
 export interface PrinterState {
   printerId: string;
   connection: ConnectionState;
@@ -67,6 +92,9 @@ export interface PrinterState {
   observedAt: number;
 }
 
+/**
+ * Provider reachability/authentication and transport health, distinct from printer state.
+ */
 export interface ProviderHealth {
   reachable: boolean;
   authenticated: boolean;
@@ -79,6 +107,9 @@ export interface ProviderHealth {
   observedAt: number;
 }
 
+/**
+ * Provider-neutral connection reference, not a native port/connector object.
+ */
 export interface ConnectorRef {
   id: string;
   family: 'SERIAL' | 'NETWORK' | 'OTHER' | 'UNKNOWN';
@@ -87,6 +118,9 @@ export interface ConnectorRef {
   capabilities?: string[];
 }
 
+/**
+ * Provider-neutral storage capabilities and writeability classification.
+ */
 export interface StorageRef {
   id: string;
   name: string;
@@ -97,6 +131,9 @@ export interface StorageRef {
   capabilities: CapabilityId[];
 }
 
+/**
+ * Provider-logical file identity; path MUST NOT be combined with local filesystem roots.
+ */
 export interface FileRef {
   storageId: string;
   path: string;
@@ -107,6 +144,9 @@ export interface FileRef {
   metadata?: Record<string, unknown>;
 }
 
+/**
+ * Single normalized boundary object validated before entering Revival core.
+ */
 export interface ProviderSnapshot {
   identity: ProviderIdentity;
   capabilitiesRevision: number;
@@ -119,10 +159,25 @@ export interface ProviderSnapshot {
   files: FileRef[];
 }
 
+/**
+ * Enforces a runtime provider-contract invariant.
+ * @param condition - Assertion condition.
+ * @param message - Stable validation explanation.
+ * @returns Nothing if valid.
+ * @throws Error if validation fails.
+ */
 function invariant(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`Invalid normalized provider value: ${message}`);
 }
 
+/**
+ * Rejects unknown fields in a normalized object.
+ * @param value - Object to inspect.
+ * @param allowed - Explicit list of permitted keys.
+ * @param name - Diagnostic field prefix.
+ * @returns Nothing on success.
+ * @throws Error for non-object/extra properties.
+ */
 function assertOnlyKeys(
   value: unknown,
   allowed: readonly string[],
@@ -134,6 +189,12 @@ function assertOnlyKeys(
   invariant(unexpected.length === 0, `${name} contains unexpected field(s): ${unexpected.join(', ')}`);
 }
 
+/**
+ * Normalizes bounded encoding and separators while rejecting traversal and empty paths.
+ * @param value - Provider-logical path, never a host filesystem path.
+ * @returns Normalized relative path with forward slashes.
+ * @throws Error for malformed/deep encoding, NUL, traversal, absolute/drive paths or empty result.
+ */
 export function normalizeLogicalPath(value: string): string {
   invariant(typeof value === 'string' && value.length > 0, 'file path must be non-empty');
 
@@ -187,23 +248,57 @@ const CONNECTOR_FAMILIES = new Set<ConnectorRef['family']>([
   'SERIAL','NETWORK','OTHER','UNKNOWN'
 ]);
 
+/**
+ * Validates required normalized string fields.
+ * @param value - Unknown value.
+ * @param name - Field label.
+ * @returns Nothing when valid.
+ * @throws Error on empty/non-string data.
+ */
 function nonEmptyString(value: unknown, name: string): asserts value is string {
   invariant(typeof value === 'string' && value.length > 0, `${name} must be a non-empty string`);
 }
 
+/**
+ * Validates optional string fields without coercion.
+ * @param value - Optional field.
+ * @param name - Field label.
+ * @returns Nothing on success.
+ * @throws Error on non-string values.
+ */
 function optionalString(value: unknown, name: string): void {
   if (value !== undefined) nonEmptyString(value, name);
 }
 
+/**
+ * Requires a finite number in normalized data.
+ * @param value - Unknown value.
+ * @param name - Field label.
+ * @returns Nothing on success.
+ * @throws Error on non-numeric/NaN/Infinity values.
+ */
 function finiteNumber(value: unknown, name: string): asserts value is number {
   invariant(typeof value === 'number' && Number.isFinite(value), `${name} must be finite`);
 }
 
+/**
+ * Validates optional records for a normalized boundary.
+ * @param value - Optional record.
+ * @param name - Field label.
+ * @returns Nothing on success.
+ * @throws Error for non-object/array data.
+ */
 function optionalRecord(value: unknown, name: string): void {
   if (value === undefined) return;
   invariant(value !== null && typeof value === 'object' && !Array.isArray(value), `${name} must be an object`);
 }
 
+/**
+ * Enforces allowed fields and semantic values across snapshot, identity, health, capabilities, connector, storage, and files.
+ * @param value - Provider-produced snapshot candidate.
+ * @returns Original snapshot when all nested shapes validate.
+ * @throws Error for native/undeclared fields, invalid enum/number/boolean semantics or unsafe FileRef paths.
+ */
 export function assertProviderSnapshot(value: ProviderSnapshot): ProviderSnapshot {
   assertOnlyKeys(value, [
     'identity','capabilitiesRevision','capabilities','availability','state','health','connector','storages','files'
