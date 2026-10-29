@@ -1,3 +1,7 @@
+/**
+ * Official host-owned provider compliance selection; core/security gates run regardless of provider hints.
+ * @module
+ */
 const assert = require('node:assert/strict');
 const { runHostSecurityGate } = require('./host-security-suite.ts');
 const { assertProviderSnapshot } = require('../../../revival/core/provider-contract.ts');
@@ -16,6 +20,9 @@ type Declaration = {
   complianceHints?: Record<string, unknown>;
 };
 
+/**
+ * Minimal provider behavior required by the official compliance runner.
+ */
 type ComplianceProvider = {
   declaration(): Declaration;
   identity(): Record<string, unknown>;
@@ -39,6 +46,12 @@ type ComplianceCheckResult = {
 type ProviderFactory = () => ComplianceProvider;
 type Pack = (provider: ComplianceProvider) => Promise<ComplianceCheckResult[]>;
 
+/**
+ * Converts one synchronous or asynchronous compliance assertion into a recorded check.
+ * @param name - Descriptive check name.
+ * @param action - Assertion to execute.
+ * @returns PASS/FAIL check result; caught errors recorded as messages.
+ */
 async function capture(name: string, action: () => Promise<void> | void): Promise<ComplianceCheckResult> {
   try {
     await action();
@@ -61,6 +74,11 @@ const CAPABILITY_PACKS: Readonly<Record<string, Pack>> = Object.freeze({
   ]
 });
 
+/**
+ * Runs mandatory core and security checks plus only supported, known capability packs.
+ * @param factory - Creates the provider under test.
+ * @returns Versioned compliance report; fails for missing/unsupported packs and failed mandatory checks.
+ */
 async function runProviderCompliance(factory: ProviderFactory) {
   const provider = factory();
   const declaration = provider.declaration();

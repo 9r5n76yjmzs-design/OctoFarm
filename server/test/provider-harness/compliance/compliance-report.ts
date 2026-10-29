@@ -1,3 +1,7 @@
+/**
+ * Machine-readable compliance report types and deterministic human-readable summary formatting.
+ * @module
+ */
 type ProviderIdentity = {
   providerId: string;
   providerInstanceId: string;
@@ -21,6 +25,9 @@ type CapabilityPackResult = {
   tests: ComplianceCheckResult[];
 };
 
+/**
+ * Versioned report combining core/security/capability results and omissions.
+ */
 type ProviderComplianceReport = {
   schemaVersion: 1;
   providerIdentity: ProviderIdentity;
@@ -42,6 +49,11 @@ type ProviderComplianceReport = {
   warnings: string[];
 };
 
+/**
+ * Formats a short status report from an already computed compliance result.
+ * @param report - Complete compliance report.
+ * @returns Human-readable multiline summary; does not alter outcomes.
+ */
 function formatComplianceSummary(report: ProviderComplianceReport): string {
   const status = report.passed ? 'PASS' : 'FAIL';
   const packs = report.capabilityPacks.length

@@ -1,3 +1,7 @@
+/**
+ * Runtime loader for declarative versioned provider fixtures; validation fails with fixture-specific context.
+ * @module
+ */
 const fs = require('node:fs');
 const path = require('node:path');
 
@@ -37,9 +41,17 @@ interface Fixture {
   expected: Record<string, unknown>;
 }
 
+/**
+ * Error identifying malformed fixture data and source path.
+ */
 class FixtureValidationError extends Error {
   fixturePath: string | null;
 
+  /**
+   * Constructs a path-qualified validation failure.
+   * @param message - Validation reason.
+   * @param fixturePath - Optional source path.
+   */
   constructor(message: string, fixturePath: string | null = null) {
     super(fixturePath ? `${fixturePath}: ${message}` : message);
     this.name = 'FixtureValidationError';
@@ -47,10 +59,23 @@ class FixtureValidationError extends Error {
   }
 }
 
+/**
+ * Rejects null, arrays and non-record fixture structures.
+ * @param value - Unknown candidate.
+ * @returns True for non-array objects.
+ */
 function isPlainObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
+/**
+ * Raises a fixture-scoped error if a contract check fails.
+ * @param condition - Required predicate.
+ * @param message - Failure reason.
+ * @param fixturePath - Optional filename.
+ * @returns Nothing.
+ * @throws FixtureValidationError on invalid data.
+ */
 function assertFixture(
   condition: unknown,
   message: string,
@@ -61,6 +86,13 @@ function assertFixture(
   }
 }
 
+/**
+ * Checks the fixture manifest, required provenance and input/expected sections.
+ * @param value - Raw parsed JSON.
+ * @param fixturePath - Optional source path.
+ * @returns Validated fixture shape.
+ * @throws FixtureValidationError on malformed schema.
+ */
 function validateFixture(value: unknown, fixturePath: string | null = null): Fixture {
   assertFixture(isPlainObject(value), 'fixture must be a JSON object', fixturePath);
 
@@ -139,6 +171,12 @@ function validateFixture(value: unknown, fixturePath: string | null = null): Fix
   return fixture as unknown as Fixture;
 }
 
+/**
+ * Reads and validates a single fixture on disk.
+ * @param fixturePath - Local fixture filename.
+ * @returns Validated fixture.
+ * @throws File read/parse or validation error.
+ */
 function loadFixtureFile(fixturePath: string): Fixture {
   let parsed: unknown;
   try {
@@ -150,6 +188,11 @@ function loadFixtureFile(fixturePath: string): Fixture {
   return validateFixture(parsed, fixturePath);
 }
 
+/**
+ * Finds fixture JSON files beneath a directory in deterministic order.
+ * @param directory - Fixture root.
+ * @returns Paths to fixture JSON files.
+ */
 function findFixtureFiles(directory: string): string[] {
   const entries = fs.readdirSync(directory, { withFileTypes: true });
   const files: string[] = [];
@@ -168,6 +211,12 @@ function findFixtureFiles(directory: string): string[] {
   return files;
 }
 
+/**
+ * Loads and validates all discovered fixture files, detecting invalid manifests.
+ * @param directory - Fixture root.
+ * @returns Validated fixtures.
+ * @throws File read/parse or validation error.
+ */
 function loadFixtureDirectory(directory: string): Fixture[] {
   const fixturesById = new Map<string, string>();
   return findFixtureFiles(directory).map((fixturePath) => {

@@ -1,3 +1,7 @@
+/**
+ * Parses validated synthetic OctoPrint fixtures into deterministic mock HTTP scenarios.
+ * @module
+ */
 const fs = require('node:fs');
 const { validateFixture } = require('../../core/fixture-loader.ts');
 
@@ -21,10 +25,23 @@ type OctoPrintScenario = {
   routes: OctoPrintRoute[];
 };
 
+/**
+ * Checks a scenario invariant with an explicit validation reason.
+ * @param condition - Required predicate.
+ * @param message - Failure description.
+ * @returns Nothing.
+ * @throws Error for malformed scenario.
+ */
 function assertScenario(condition: unknown, message: string): asserts condition {
   if (!condition) throw new Error(`Invalid OctoPrint scenario: ${message}`);
 }
 
+/**
+ * Loads a fixture and validates API mode, routes, actions and delay bounds.
+ * @param fixturePath - Declarative scenario file path.
+ * @returns Normalized synthetic OctoPrint scenario.
+ * @throws Error for invalid JSON, fixture or scenario schema.
+ */
 function loadOctoPrintScenario(fixturePath: string): OctoPrintScenario {
   const fixture = validateFixture(JSON.parse(fs.readFileSync(fixturePath, 'utf8')), fixturePath);
   const octoprint = fixture.input.octoprint as Record<string, unknown> | undefined;
