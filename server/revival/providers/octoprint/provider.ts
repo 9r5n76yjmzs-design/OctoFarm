@@ -25,8 +25,19 @@ import {
  * Minimal host-mediated HTTP response interface.
  */
 export interface HttpResponseLike {
+  /**
+   * HTTP status returned by the host transport.
+   */
   status: number;
+  /**
+   * Whether HTTP status indicates success.
+   */
   ok: boolean;
+  /**
+   * Parse the response body as JSON.
+   * @returns Decoded value.
+   * @throws Error on body-read or JSON failure.
+   */
   json(): Promise<unknown>;
 }
 
@@ -34,6 +45,13 @@ export interface HttpResponseLike {
  * Host-injected HTTP transport required by the provider.
  */
 export interface HttpTransport {
+  /**
+   * Perform a provider request through host mediation; no direct fetch fallback.
+   * @param url - Host-approved endpoint.
+   * @param init - Optional HTTP method and headers.
+   * @returns Mediated HTTP response.
+   * @throws Error on host policy or transport failure.
+   */
   request(url: string, init?: { method?: string; headers?: Record<string, string> }): Promise<HttpResponseLike>;
 }
 

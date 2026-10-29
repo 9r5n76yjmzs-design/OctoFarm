@@ -9,8 +9,17 @@ import type { SensitiveValueGuard } from './sensitive-values.ts';
  * Optional host-owned identifiers and HTTP status in serialized diagnostics.
  */
 export interface DiagnosticContext {
+  /**
+   * Optional host provider instance ID for safe diagnostics.
+   */
   providerInstanceId?: string;
+  /**
+   * Optional host printer ID for safe diagnostics.
+   */
   printerId?: string;
+  /**
+   * Optional HTTP status validated to the range 100–599.
+   */
   httpStatus?: number;
 }
 
