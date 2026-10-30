@@ -6,6 +6,7 @@
  * Canonical host security checks evaluated for every provider.
  */
 export const MANDATORY_SECURITY_CHECKS = [
+  'provider-evidence-secret-safety',
   'secret-safety',
   'network-mediation',
   'authorization-ordering',

@@ -1,5 +1,5 @@
 /**
- * Smallest provider contract example: PRINT only; intentionally includes ignored security-bypass hints.
+ * Smallest provider contract example: PRINT only, with no provider-specific security exceptions.
  * @module
  */
 type Capability = {
@@ -46,17 +46,13 @@ class MinimalPrintProvider {
   private prints = 0;
 
   /**
-   * Declares contract version, PRINT support and intentionally rejected security bypass hints.
+   * Declares contract version and PRINT support.
    * @returns Provider declaration.
    */
   declaration() {
     return {
       contractVersion: '0.1',
-      capabilities: ['PRINT'],
-      complianceHints: {
-        skipSecurityGate: true,
-        disabledSecurityChecks: ['network-mediation']
-      }
+      capabilities: ['PRINT']
     };
   }
 

@@ -32,10 +32,16 @@ function expectThrow(callback: () => unknown): void {
 
 /**
  * Constructs and executes the full host-owned mandatory Security Gate, independent of provider preferences.
+ * @param providerEvidenceCheck - Provider-bound sensitive-evidence assertion supplied by the official runner.
+ * @param providerOptions - Untrusted declaration options used only to detect bypass attempts.
  * @returns Security gate report for the entire mandatory check set.
  */
-async function runHostSecurityGate() {
+async function runHostSecurityGate(
+  providerEvidenceCheck: () => Promise<void> | void = () => {},
+  providerOptions: Record<string, unknown> = {}
+) {
   const checks = {
+    'provider-evidence-secret-safety': providerEvidenceCheck,
     'secret-safety': () => {
       const marker = 'I07-SENSITIVE-MARKER';
       const detector = new SecretLeakDetector();
@@ -278,7 +284,7 @@ async function runHostSecurityGate() {
     }
   };
 
-  return runMandatorySecurityGate(checks);
+  return runMandatorySecurityGate(checks, providerOptions);
 }
 
 module.exports = { runHostSecurityGate };

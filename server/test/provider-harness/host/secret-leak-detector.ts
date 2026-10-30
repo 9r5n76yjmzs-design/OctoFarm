@@ -36,7 +36,7 @@ class SecretLeakDetector {
    */
   assertClean(value: unknown): void {
     const leaked = this.scan(value);
-    if (leaked.length) throw new Error(`Synthetic secret leak detected: ${leaked.join(', ')}`);
+    if (leaked.length) throw new Error(`Synthetic secret leak detected (${leaked.length} registered value(s))`);
   }
 
   /**

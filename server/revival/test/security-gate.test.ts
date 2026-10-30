@@ -304,7 +304,7 @@ test('mandatory Security Gate runs every host-selected check despite provider by
 
 test('mandatory Security Gate fails closed when a host security check is missing', async () => {
   const checks = {};
-  for (const name of MANDATORY_SECURITY_CHECKS.slice(1)) checks[name] = () => {};
+  for (const name of MANDATORY_SECURITY_CHECKS.filter((name) => name !== 'secret-safety')) checks[name] = () => {};
   const report = await runMandatorySecurityGate(checks);
   assert.equal(report.passed, false);
   assert.equal(report.results.find((result) => result.name === 'secret-safety').passed, false);
