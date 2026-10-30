@@ -23,14 +23,30 @@ testable using the deterministic provider harness.
 - Legacy callers may call a compatibility facade, which may use Revival.
   Revival must not depend on legacy printer/store/UI implementations.
 - Provider-native normalization terminates in a provider adapter. Only the
-  normalized, runtime-validated contract enters the domain core.
+  normalized, runtime-validated contract enters the domain core. Event
+  admission rejects undeclared envelope/payload fields and queues a fresh
+  allowlisted copy rather than retaining the provider-owned object.
 - Application authorization happens **before** invoking a provider operation.
   The host classifies privileged operations; provider hints are not authority.
+  The official compliance runner proves both denied and allowed paths against
+  the actual provider callback, fails on a provider bypass request, and rejects
+  an advertised operation whose implementation is absent.
 - Host-selected network, credential, path, resource and diagnostic controls
   are mandatory supported boundaries. Same-process JavaScript is **not**
   assumed to isolate arbitrary malicious provider code.
 - Provider credentials do not belong in UI/browser projection, events,
-  telemetry or compliance reports.
+  telemetry or compliance reports. Compliance seeds a scoped synthetic
+  credential lease, scans provider-derived evidence, and emits data-only
+  redacted reports without retaining provider-controlled serialization hooks.
+- Replay, stream, capability, and state authority are scoped by provider
+  instance without delimiter-based tuple ambiguity. Snapshot reconciliation
+  and current-state lookup require validated `providerInstanceId` and
+  `printerId`; lookups return copies rather than mutable authority references.
+- A malformed recognized transport message is contained at the controller,
+  records only a bounded host reason, and transitions to `DEGRADED`. Recovery
+  is explicit through `connect()`; no new automatic reconnect threshold is
+  implied by malformed-message handling. A throwing adapter `close()` cannot
+  block explicit recovery or terminal shutdown finalization.
 - A supported capability and its momentary availability are separate facts.
 - A synthetic fixture PASS does not prove real OctoPrint 2 protocol
   qualification. Independent security approval is a separate decision.

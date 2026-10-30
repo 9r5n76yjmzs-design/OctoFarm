@@ -66,9 +66,9 @@ export class BoundedEventIngress {
    */
   enqueue(event: DomainEvent): IngressResult {
     if (this.closed) return { accepted: false, duplicate: false, degraded: this.degraded, reason: 'CLOSED' };
-    assertDomainEvent(event);
+    const normalized = assertDomainEvent(event);
 
-    const identity = replayKey(event);
+    const identity = replayKey(normalized);
     if (this.seen.has(identity)) {
       return { accepted: false, duplicate: true, degraded: this.degraded, reason: 'DUPLICATE' };
     }
@@ -78,9 +78,9 @@ export class BoundedEventIngress {
     }
 
     this.remember(identity);
-    const key = streamKey(event);
+    const key = streamKey(normalized);
     const queue = this.queues.get(key) ?? [];
-    queue.push(event);
+    queue.push(normalized);
     this.queues.set(key, queue);
     this.queued++;
 

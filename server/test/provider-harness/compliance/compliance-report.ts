@@ -40,6 +40,7 @@ type ProviderComplianceReport = {
   };
   security: {
     passed: boolean;
+    bypassRequested: boolean;
     tests: ComplianceCheckResult[];
   };
   capabilities: { id: string; supported: boolean }[];

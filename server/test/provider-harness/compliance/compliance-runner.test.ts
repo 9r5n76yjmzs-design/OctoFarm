@@ -8,6 +8,7 @@ const path = require('node:path');
 const { test } = require('node:test');
 const { MinimalPrintProvider } = require('../samples/minimal-print-provider.ts');
 const { runProviderCompliance } = require('./compliance-runner.ts');
+const { formatComplianceSummary } = require('./compliance-report.ts');
 const { MANDATORY_SECURITY_CHECKS } = require('../../../revival/security/security-gate.ts');
 
 test('minimal non-OctoPrint PRINT-only provider passes core, mandatory security, and declared pack', async () => {
@@ -16,7 +17,7 @@ test('minimal non-OctoPrint PRINT-only provider passes core, mandatory security,
 
   assert.equal(report.passed, true, JSON.stringify(report, null, 2));
   assert.equal(report.providerIdentity.providerId, 'minimal-print');
-  assert.equal(report.harnessVersion, 'or11-i07-v1');
+  assert.equal(report.harnessVersion, 'or11-gate-a-v2');
   assert.deepEqual(report.capabilityPacks.map((pack) => pack.declaredCapabilities), [['PRINT']]);
   assert.equal(provider.printCount(), 1);
   assert.deepEqual(report.compatibilitySuites, []);
@@ -31,7 +32,7 @@ test('capability selection is granular and does not infer PAUSE/RESUME/CANCEL/RE
   }
 });
 
-test('official runner owns mandatory Security Gate selection and ignores provider bypass hints', async () => {
+test('official runner owns mandatory Security Gate selection', async () => {
   const report = await runProviderCompliance(() => new MinimalPrintProvider());
   assert.equal(report.security.passed, true, JSON.stringify(report.security, null, 2));
   assert.deepEqual(
@@ -39,6 +40,124 @@ test('official runner owns mandatory Security Gate selection and ignores provide
     [...MANDATORY_SECURITY_CHECKS]
   );
   assert.equal(report.security.tests.every((result) => result.passed), true);
+});
+
+test('provider bypass requests fail closed while every mandatory security check still runs', async () => {
+  class BypassProvider extends MinimalPrintProvider {
+    declaration() {
+      return {
+        ...super.declaration(),
+        complianceHints: {
+          skipSecurityGate: true,
+          disabledSecurityChecks: ['network-mediation']
+        }
+      };
+    }
+  }
+
+  const report = await runProviderCompliance(() => new BypassProvider());
+  assert.equal(report.passed, false);
+  assert.equal(report.security.passed, false);
+  assert.equal(report.security.bypassRequested, true);
+  assert.deepEqual(
+    report.security.tests.map((result) => result.name),
+    [...MANDATORY_SECURITY_CHECKS]
+  );
+  assert.equal(report.security.tests.every((result) => result.passed), true);
+});
+
+test('provider-derived secret evidence fails compliance and is redacted from report and summary', async () => {
+  let syntheticSecret = '';
+
+  class LeakingProvider extends MinimalPrintProvider {
+    constructor(context) {
+      super();
+      const lease = context.credentials.current(context.credentialScope);
+      syntheticSecret = lease.value;
+    }
+
+    identity() {
+      return {
+        ...super.identity(),
+        displayName: `Leaking ${syntheticSecret}`
+      };
+    }
+
+    print() {
+      throw new Error(`provider failed with ${syntheticSecret}`);
+    }
+  }
+
+  const report = await runProviderCompliance((context) => new LeakingProvider(context));
+  const serialized = JSON.stringify(report);
+  const summary = formatComplianceSummary(report);
+
+  assert.equal(report.passed, false);
+  assert.equal(report.security.passed, false);
+  assert.equal(
+    report.security.tests.find((result) => result.name === 'provider-evidence-secret-safety')?.passed,
+    false
+  );
+  assert.equal(serialized.includes(syntheticSecret), false);
+  assert.equal(summary.includes(syntheticSecret), false);
+  assert.match(report.providerIdentity.displayName, /\[REDACTED\]/);
+  assert.equal(
+    report.capabilityPacks[0].tests.some((result) => result.message?.includes(syntheticSecret)),
+    false
+  );
+});
+
+test('provider-controlled serialization hooks cannot survive report normalization', async () => {
+  let syntheticSecret = '';
+
+  const report = await runProviderCompliance((context) => {
+    const provider = new MinimalPrintProvider();
+    syntheticSecret = context.credentials.current(context.credentialScope).value;
+    const baseIdentity = provider.identity();
+    provider.identity = () => ({
+      ...baseIdentity,
+      toJSON() { return syntheticSecret; },
+      toString() { return syntheticSecret; }
+    });
+    return provider;
+  });
+
+  assert.equal(report.passed, false);
+  assert.equal(JSON.stringify(report).includes(syntheticSecret), false);
+  assert.equal(formatComplianceSummary(report).includes(syntheticSecret), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(report.providerIdentity, 'toJSON'), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(report.providerIdentity, 'toString'), false);
+});
+
+test('a provider advertising PRINT fails its pack when the operation is absent', async () => {
+  const provider = new MinimalPrintProvider();
+  provider.print = undefined;
+
+  const report = await runProviderCompliance(() => provider);
+  const allowed = report.capabilityPacks[0].tests.find(
+    (result) => result.name === 'PRINT callable when declared and authorized'
+  );
+
+  assert.equal(report.passed, false);
+  assert.equal(report.capabilityPacks[0].passed, false);
+  assert.equal(allowed?.passed, false);
+});
+
+test('declared provider operations are denied before invocation and run once only after host authorization', async () => {
+  const provider = new MinimalPrintProvider();
+  const report = await runProviderCompliance(() => provider);
+  const printTests = report.capabilityPacks[0].tests;
+
+  assert.equal(report.passed, true, JSON.stringify(report, null, 2));
+  assert.equal(provider.printCount(), 1);
+  assert.equal(
+    printTests.find((result) => result.name === 'PRINT denied before provider invocation without authorization')?.passed,
+    true
+  );
+  assert.equal(
+    printTests.find((result) => result.name === 'PRINT callable when declared and authorized')?.passed,
+    true
+  );
 });
 
 test('minimal provider sample contains no OctoPrint dependency or provider-specific branch', () => {

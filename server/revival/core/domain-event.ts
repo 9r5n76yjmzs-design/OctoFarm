@@ -74,6 +74,11 @@ function invariant(condition: unknown, message: string): asserts condition {
  */
 function object(value: unknown, name: string): Record<string, unknown> {
   invariant(value !== null && typeof value === 'object' && !Array.isArray(value), `${name} must be an object`);
+  const prototype = Object.getPrototypeOf(value);
+  invariant(prototype === Object.prototype || prototype === null, `${name} must be a plain object`);
+  for (const descriptor of Object.values(Object.getOwnPropertyDescriptors(value))) {
+    invariant('value' in descriptor, `${name} must contain only data properties`);
+  }
   return value as Record<string, unknown>;
 }
 
@@ -91,15 +96,27 @@ function exactKeys(value: Record<string, unknown>, allowed: readonly string[], n
 }
 
 /**
- * Validates optional bounded identity fields.
+ * Validates a required bounded identity and rejects control characters.
+ * @param value - Identity value.
+ * @param name - Field label.
+ * @param maxLength - Maximum accepted length.
+ * @returns Nothing on success.
+ * @throws Error for malformed, oversized, or control-bearing IDs.
+ */
+function identity(value: unknown, name: string, maxLength: number): asserts value is string {
+  invariant(typeof value === 'string' && value.length > 0 && value.length <= maxLength, `${name} must be a bounded string`);
+  invariant(!/[\u0000-\u001f\u007f-\u009f]/.test(value), `${name} must not contain a control character`);
+}
+
+/**
+ * Validates an optional bounded identity without control characters.
  * @param value - Optional identity value.
  * @param name - Field label.
  * @returns Nothing on success.
- * @throws Error for malformed or oversized IDs.
  */
 function optionalId(value: unknown, name: string): void {
   if (value === undefined) return;
-  invariant(typeof value === 'string' && value.length > 0 && value.length <= 256, `${name} must be a bounded string`);
+  identity(value, name, 256);
 }
 
 /**
@@ -111,7 +128,7 @@ function optionalId(value: unknown, name: string): void {
 function validatePrinterState(value: unknown): void {
   const state = object(value, 'payload.state');
   exactKeys(state, ['printerId','connection','operation','capabilitiesRevision','observedAt'], 'payload.state');
-  invariant(typeof state.printerId === 'string' && state.printerId.length > 0, 'payload.state.printerId is required');
+  identity(state.printerId, 'payload.state.printerId', 256);
   invariant(CONNECTIONS.has(state.connection as ConnectionState), 'payload.state.connection is invalid');
   invariant(OPERATIONS.has(state.operation as OperationalState), 'payload.state.operation is invalid');
   invariant(Number.isInteger(state.capabilitiesRevision) && Number(state.capabilitiesRevision) >= 1, 'payload.state.capabilitiesRevision is invalid');
@@ -191,25 +208,100 @@ function validatePayload(event: DomainEvent): void {
 }
 
 /**
+ * Rebuilds one validated payload from only its declared schema fields.
+ * @param event - Event whose payload already passed runtime validation.
+ * @returns Fresh normalized payload copy.
+ */
+function normalizedPayload(event: DomainEvent): Record<string, unknown> {
+  const payload = event.payload as Record<string, unknown>;
+  switch (event.type) {
+    case 'ProviderConnected':
+      return {};
+    case 'ProviderDisconnected':
+      return payload.reason === undefined ? {} : { reason: payload.reason };
+    case 'ProviderHealthChanged': {
+      const health = payload.health as Record<string, unknown>;
+      return {
+        health: {
+          reachable: health.reachable,
+          authenticated: health.authenticated,
+          transportConnected: health.transportConnected,
+          ...(health.latencyMs === undefined ? {} : { latencyMs: health.latencyMs }),
+          ...(health.lastSuccessfulContact === undefined ? {} : { lastSuccessfulContact: health.lastSuccessfulContact }),
+          retrying: health.retrying,
+          degraded: health.degraded,
+          ...(health.reason === undefined ? {} : { reason: health.reason }),
+          observedAt: health.observedAt
+        }
+      };
+    }
+    case 'CapabilitiesChanged':
+      return { capabilitiesRevision: payload.capabilitiesRevision };
+    case 'PrinterConnectionChanged':
+      return { connection: payload.connection };
+    case 'PrinterStateChanged': {
+      const state = payload.state as Record<string, unknown>;
+      return {
+        state: {
+          printerId: state.printerId,
+          connection: state.connection,
+          operation: state.operation,
+          capabilitiesRevision: state.capabilitiesRevision,
+          observedAt: state.observedAt
+        }
+      };
+    }
+    case 'PrintStarted':
+    case 'PrintPaused':
+    case 'PrintResumed':
+    case 'PrintCancelled':
+    case 'PrintFailed':
+      return payload.jobId === undefined ? {} : { jobId: payload.jobId };
+    case 'PrintCompleted':
+      return {
+        ...(payload.jobId === undefined ? {} : { jobId: payload.jobId }),
+        ...(payload.completedAt === undefined ? {} : { completedAt: payload.completedAt })
+      };
+  }
+}
+
+/**
  * Checks the full runtime normalized event boundary, including typed payloads.
  * @param event - Event supplied by a provider or translation layer.
- * @returns The original event for downstream use.
+ * @returns A fresh allowlisted event for downstream use.
  * @throws Error for unsupported versions, invalid identities, payloads, or timestamps.
  */
 export function assertDomainEvent<T>(event: DomainEvent<T>): DomainEvent<T> {
-  invariant(event && typeof event === 'object', 'event must be an object');
+  const record = object(event, 'event');
+  exactKeys(
+    record,
+    ['schemaVersion','eventId','type','printerId','providerId','providerInstanceId','occurredAt','observedAt','correlationId','causationId','payload'],
+    'event'
+  );
   invariant(event.schemaVersion === 1, 'unsupported schemaVersion');
-  invariant(typeof event.eventId === 'string' && event.eventId.length > 0 && event.eventId.length <= 512, 'eventId is required and bounded');
+  identity(event.eventId, 'eventId', 512);
   invariant(TYPES.has(event.type), `unsupported type ${String(event.type)}`);
-  invariant(typeof event.printerId === 'string' && event.printerId.length > 0 && event.printerId.length <= 256, 'printerId is required and bounded');
-  invariant(typeof event.providerId === 'string' && event.providerId.length > 0 && event.providerId.length <= 128, 'providerId is required and bounded');
-  invariant(typeof event.providerInstanceId === 'string' && event.providerInstanceId.length > 0 && event.providerInstanceId.length <= 256, 'providerInstanceId is required and bounded');
+  identity(event.printerId, 'printerId', 256);
+  identity(event.providerId, 'providerId', 128);
+  identity(event.providerInstanceId, 'providerInstanceId', 256);
   optionalId(event.correlationId, 'correlationId');
   optionalId(event.causationId, 'causationId');
   invariant(Number.isFinite(event.occurredAt), 'occurredAt is required');
   invariant(Number.isFinite(event.observedAt), 'observedAt is required');
   validatePayload(event as DomainEvent);
-  return event;
+  return {
+    schemaVersion: 1,
+    eventId: event.eventId,
+    type: event.type,
+    printerId: event.printerId,
+    providerId: event.providerId,
+    providerInstanceId: event.providerInstanceId,
+    occurredAt: event.occurredAt,
+    observedAt: event.observedAt,
+    ...(event.correlationId === undefined ? {} : { correlationId: event.correlationId }),
+    ...(event.causationId === undefined ? {} : { causationId: event.causationId }),
+    payload: normalizedPayload(event as DomainEvent) as T
+  };
 }
 
 /**
@@ -218,7 +310,7 @@ export function assertDomainEvent<T>(event: DomainEvent<T>): DomainEvent<T> {
  * @returns Per-stream identity key.
  */
 export function streamKey(event: DomainEvent): string {
-  return `${event.providerInstanceId}:${event.printerId}`;
+  return JSON.stringify([event.providerInstanceId, event.printerId]);
 }
 
 /**
@@ -227,5 +319,5 @@ export function streamKey(event: DomainEvent): string {
  * @returns Replay suppression key.
  */
 export function replayKey(event: DomainEvent): string {
-  return `${event.providerInstanceId}\u0000${event.eventId}`;
+  return JSON.stringify([event.providerInstanceId, event.eventId]);
 }
