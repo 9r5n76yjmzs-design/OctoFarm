@@ -136,6 +136,7 @@ function redactForReport(
   seen = new Set<object>()
 ): unknown {
   if (typeof value === 'string') return guard.redact(value);
+  if (typeof value === 'function' || typeof value === 'symbol' || typeof value === 'bigint') return undefined;
   if (value === null || value === undefined || typeof value !== 'object') return value;
   if (seen.has(value)) return '[Circular]';
   seen.add(value);
@@ -143,11 +144,20 @@ function redactForReport(
   if (value instanceof Error) {
     return { name: guard.redact(value.name), message: guard.redact(value.message) };
   }
-  if (Array.isArray(value)) return value.map((entry) => redactForReport(entry, guard, seen));
+  if (Array.isArray(value)) {
+    return Array.from({ length: value.length }, (_unused, index) => {
+      const descriptor = Object.getOwnPropertyDescriptor(value, String(index));
+      return descriptor && 'value' in descriptor
+        ? redactForReport(descriptor.value, guard, seen)
+        : undefined;
+    });
+  }
 
   const output: Record<string, unknown> = {};
-  for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
-    output[guard.redact(key)] = redactForReport(nested, guard, seen);
+  for (const [key, descriptor] of Object.entries(Object.getOwnPropertyDescriptors(value))) {
+    if (!descriptor.enumerable || !('value' in descriptor)) continue;
+    const nested = redactForReport(descriptor.value, guard, seen);
+    if (nested !== undefined) output[guard.redact(key)] = nested;
   }
   return output;
 }
@@ -223,9 +233,11 @@ const CAPABILITY_PACKS: Readonly<Record<string, Pack>> = Object.freeze({
       );
       assert.equal(invoked, 0);
     }, evidence, guard),
-    await capture('PRINT callable when declared and authorized', () =>
-      allowedBroker.invoke('PRINT', { capabilitySupported: true }, () => provider.print?.()),
-    evidence, guard)
+    await capture('PRINT callable when declared and authorized', () => {
+      const operation = provider.print;
+      assert.equal(typeof operation, 'function', 'PRINT must be callable when advertised supported');
+      return allowedBroker.invoke('PRINT', { capabilitySupported: true }, () => operation.call(provider));
+    }, evidence, guard)
   ]
 });
 

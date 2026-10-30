@@ -47,6 +47,7 @@ export class EventController {
   private manualDisconnect = false;
   private value: ControllerState = 'IDLE';
   private lastReason?: string;
+  private messageFailures = 0;
 
   /**
    * Wires transport, testable scheduler, bounded ingress, translator, and retry delays.
@@ -65,13 +66,21 @@ export class EventController {
   }
 
   /**
-   * Returns a snapshot of connection/retry/degradation state.
-   * @returns Current state, attempts, last reason, and terminal flag.
+   * Returns a snapshot of connection, retry, degradation, and bounded message-failure state.
+   * @returns Current state, attempts, last reason, terminal flag, and failure count.
    */
-  state() { return { state: this.value, reconnectAttempts: this.attempt, reason: this.lastReason, terminal: this.terminal }; }
+  state() {
+    return {
+      state: this.value,
+      reconnectAttempts: this.attempt,
+      reason: this.lastReason,
+      terminal: this.terminal,
+      messageFailures: this.messageFailures
+    };
+  }
 
   /**
-   * Starts or resumes transport; duplicate connections are ignored.
+   * Starts or resumes transport; duplicate connections are ignored and explicit recovery replaces a degraded transport.
    * @returns Nothing.
    * @throws Error after terminal shutdown.
    */
@@ -79,6 +88,7 @@ export class EventController {
     if (this.terminal) throw new Error('controller is shutdown');
     if (this.value === 'CONNECTING' || this.value === 'CONNECTED' || this.value === 'RECONNECTING') return;
     this.manualDisconnect = false;
+    if (this.value === 'DEGRADED' && this.transport) this.closeCurrentTransport();
     this.open(false);
   }
 
@@ -90,8 +100,7 @@ export class EventController {
     if (this.terminal) return;
     this.manualDisconnect = true;
     if (this.retryId !== undefined) { this.scheduler.cancel(this.retryId); this.retryId = undefined; }
-    this.transport?.close();
-    this.transport = undefined;
+    this.closeCurrentTransport();
     this.value = 'DISCONNECTED';
   }
 
@@ -104,9 +113,22 @@ export class EventController {
     this.terminal = true;
     this.manualDisconnect = true;
     if (this.retryId !== undefined) { this.scheduler.cancel(this.retryId); this.retryId = undefined; }
-    this.transport?.close();
-    this.transport = undefined;
+    this.closeCurrentTransport();
     this.value = 'SHUTDOWN';
+  }
+
+  /**
+   * Detaches and closes the active adapter without allowing adapter text or exceptions to escape lifecycle control.
+   * @returns Nothing.
+   */
+  private closeCurrentTransport(): void {
+    const transport = this.transport;
+    this.transport = undefined;
+    try {
+      transport?.close();
+    } catch {
+      this.lastReason = 'TRANSPORT_CLOSE_FAILED';
+    }
   }
 
   /**
@@ -129,9 +151,21 @@ export class EventController {
       },
       onMessage: (raw) => {
         if (this.terminal || this.transport !== token || this.value !== 'CONNECTED') return;
-        const event = this.translate(raw);
+        let event: DomainEvent | undefined;
+        try {
+          event = this.translate(raw);
+        } catch {
+          this.recordMessageFailure(token, 'EVENT_TRANSLATION_FAILED');
+          return;
+        }
         if (!event) return;
-        const result = this.ingress.enqueue(event);
+        let result: { accepted: boolean; reason?: string };
+        try {
+          result = this.ingress.enqueue(event);
+        } catch {
+          this.recordMessageFailure(token, 'EVENT_INGRESS_FAILED');
+          return;
+        }
         if (!result.accepted && result.reason === 'BACKPRESSURE') {
           this.value = 'DEGRADED';
           this.lastReason = 'BACKPRESSURE';
@@ -169,5 +203,21 @@ export class EventController {
       this.retryId = undefined;
       if (!this.terminal && !this.manualDisconnect) this.open(true);
     });
+  }
+
+  /**
+   * Records one bounded redacted message failure without copying provider exception data.
+   * @param token - Transport instance that observed the failure.
+   * @param reason - Stable host-defined failure category.
+   * @returns Nothing.
+   */
+  private recordMessageFailure(
+    token: EventTransport,
+    reason: 'EVENT_TRANSLATION_FAILED' | 'EVENT_INGRESS_FAILED'
+  ): void {
+    if (this.terminal || this.transport !== token) return;
+    this.messageFailures = Math.min(Number.MAX_SAFE_INTEGER, this.messageFailures + 1);
+    this.value = 'DEGRADED';
+    this.lastReason = reason;
   }
 }

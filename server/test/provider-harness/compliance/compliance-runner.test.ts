@@ -107,6 +107,42 @@ test('provider-derived secret evidence fails compliance and is redacted from rep
   );
 });
 
+test('provider-controlled serialization hooks cannot survive report normalization', async () => {
+  let syntheticSecret = '';
+
+  const report = await runProviderCompliance((context) => {
+    const provider = new MinimalPrintProvider();
+    syntheticSecret = context.credentials.current(context.credentialScope).value;
+    const baseIdentity = provider.identity();
+    provider.identity = () => ({
+      ...baseIdentity,
+      toJSON() { return syntheticSecret; },
+      toString() { return syntheticSecret; }
+    });
+    return provider;
+  });
+
+  assert.equal(report.passed, false);
+  assert.equal(JSON.stringify(report).includes(syntheticSecret), false);
+  assert.equal(formatComplianceSummary(report).includes(syntheticSecret), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(report.providerIdentity, 'toJSON'), false);
+  assert.equal(Object.prototype.hasOwnProperty.call(report.providerIdentity, 'toString'), false);
+});
+
+test('a provider advertising PRINT fails its pack when the operation is absent', async () => {
+  const provider = new MinimalPrintProvider();
+  provider.print = undefined;
+
+  const report = await runProviderCompliance(() => provider);
+  const allowed = report.capabilityPacks[0].tests.find(
+    (result) => result.name === 'PRINT callable when declared and authorized'
+  );
+
+  assert.equal(report.passed, false);
+  assert.equal(report.capabilityPacks[0].passed, false);
+  assert.equal(allowed?.passed, false);
+});
+
 test('declared provider operations are denied before invocation and run once only after host authorization', async () => {
   const provider = new MinimalPrintProvider();
   const report = await runProviderCompliance(() => provider);
